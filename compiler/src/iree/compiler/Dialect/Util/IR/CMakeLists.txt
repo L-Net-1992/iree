@@ -12,24 +12,6 @@ iree_add_all_subdirs()
 
 iree_cc_library(
   NAME
-    ExternalModels
-  HDRS
-    "UtilExternalModels.h"
-  SRCS
-    "UtilExternalModels.cpp"
-  DEPS
-    ::IR
-    IREELinalgExtDialect
-    MLIRArithDialect
-    MLIRLinalgDialect
-    MLIRLinalgStructuredOpsIncGenLib
-    MLIRMLProgramDialect
-    MLIRTensorDialect
-  PUBLIC
-)
-
-iree_cc_library(
-  NAME
     IR
   HDRS
     "ClosureOpUtils.h"
@@ -42,6 +24,8 @@ iree_cc_library(
     "UtilAttrInterfaces.h.inc"
     "UtilAttrs.cpp.inc"
     "UtilAttrs.h.inc"
+    "UtilEnums.cpp.inc"
+    "UtilEnums.h.inc"
     "UtilOpInterfaces.cpp.inc"
     "UtilOpInterfaces.h.inc"
     "UtilOps.cpp.inc"
@@ -63,10 +47,13 @@ iree_cc_library(
     ::UtilOpsGen
     ::UtilTypesGen
     LLVMSupport
+    MLIRAffineDialect
     MLIRArithDialect
+    MLIRCastInterfaces
     MLIRControlFlowDialect
     MLIRControlFlowInterfaces
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRInferTypeOpInterface
     MLIRMemRefDialect
@@ -74,6 +61,7 @@ iree_cc_library(
     MLIRSideEffectInterfaces
     MLIRSupport
     MLIRTensorDialect
+    MLIRTransformUtils
     MLIRTransforms
     MLIRViewLikeInterface
   PUBLIC
@@ -87,6 +75,8 @@ iree_tablegen_library(
   OUTS
     --gen-attrdef-decls UtilAttrs.h.inc
     --gen-attrdef-defs UtilAttrs.cpp.inc
+    --gen-enum-decls UtilEnums.h.inc
+    --gen-enum-defs UtilEnums.cpp.inc
 )
 
 iree_tablegen_library(

@@ -24,7 +24,7 @@ iree_runtime_cc_library(
     ],
     deps = [
         "//runtime/src/iree/base",
-        "//runtime/src/iree/base:tracing",
+        "//runtime/src/iree/base/internal",
         "@com_google_benchmark//:benchmark",
     ],
 )
@@ -59,6 +59,7 @@ iree_runtime_cc_library(
     tags = ["keep_dep"],
     deps = [
         ":gtest",
+        "//runtime/src/iree/base",
         "//runtime/src/iree/base/internal:flags",
         "@com_google_googletest//:gtest",
     ],

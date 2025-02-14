@@ -6,7 +6,7 @@
 
 load("//build_tools/bazel:build_defs.oss.bzl", "iree_cmake_extra_content")
 load("//build_tools/bazel:iree_bytecode_module.bzl", "iree_bytecode_module")
-load("//build_tools/embed_data:build_defs.bzl", "c_embed_data")
+load("//build_tools/embed_data:build_defs.bzl", "iree_c_embed_data")
 
 package(
     default_visibility = ["//runtime/src/iree/vm:__subpackages__"],
@@ -23,26 +23,31 @@ endif()
     inline = True,
 )
 
-c_embed_data(
+iree_c_embed_data(
     name = "all_bytecode_modules_c",
     srcs = [
         ":arithmetic_ops.vmfb",
         ":arithmetic_ops_f32.vmfb",
+        ":arithmetic_ops_f64.vmfb",
         ":arithmetic_ops_i64.vmfb",
         ":assignment_ops.vmfb",
         ":assignment_ops_f32.vmfb",
+        ":assignment_ops_f64.vmfb",
         ":assignment_ops_i64.vmfb",
         ":buffer_ops.vmfb",
         ":call_ops.vmfb",
         ":comparison_ops.vmfb",
         ":comparison_ops_f32.vmfb",
+        ":comparison_ops_f64.vmfb",
         ":comparison_ops_i64.vmfb",
         ":control_flow_ops.vmfb",
         ":conversion_ops.vmfb",
         ":conversion_ops_f32.vmfb",
+        ":conversion_ops_f64.vmfb",
         ":conversion_ops_i64.vmfb",
         ":global_ops.vmfb",
         ":global_ops_f32.vmfb",
+        ":global_ops_f64.vmfb",
         ":global_ops_i64.vmfb",
         ":list_ops.vmfb",
         ":list_ops_i64.vmfb",
@@ -69,6 +74,16 @@ iree_bytecode_module(
     src = "arithmetic_ops_f32.mlir",
     flags = [
         "--compile-mode=vm",
+        "--iree-vm-target-extension-f32=true",
+    ],
+)
+
+iree_bytecode_module(
+    name = "arithmetic_ops_f64",
+    src = "arithmetic_ops_f64.mlir",
+    flags = [
+        "--compile-mode=vm",
+        "--iree-vm-target-extension-f64=true",
     ],
 )
 
@@ -93,6 +108,16 @@ iree_bytecode_module(
     src = "assignment_ops_f32.mlir",
     flags = [
         "--compile-mode=vm",
+        "--iree-vm-target-extension-f32=true",
+    ],
+)
+
+iree_bytecode_module(
+    name = "assignment_ops_f64",
+    src = "assignment_ops_f64.mlir",
+    flags = [
+        "--compile-mode=vm",
+        "--iree-vm-target-extension-f64=true",
     ],
 )
 
@@ -133,6 +158,16 @@ iree_bytecode_module(
     src = "comparison_ops_f32.mlir",
     flags = [
         "--compile-mode=vm",
+        "--iree-vm-target-extension-f32=true",
+    ],
+)
+
+iree_bytecode_module(
+    name = "comparison_ops_f64",
+    src = "comparison_ops_f64.mlir",
+    flags = [
+        "--compile-mode=vm",
+        "--iree-vm-target-extension-f64=true",
     ],
 )
 
@@ -165,6 +200,16 @@ iree_bytecode_module(
     src = "conversion_ops_f32.mlir",
     flags = [
         "--compile-mode=vm",
+        "--iree-vm-target-extension-f32=true",
+    ],
+)
+
+iree_bytecode_module(
+    name = "conversion_ops_f64",
+    src = "conversion_ops_f64.mlir",
+    flags = [
+        "--compile-mode=vm",
+        "--iree-vm-target-extension-f64=true",
     ],
 )
 
@@ -189,6 +234,16 @@ iree_bytecode_module(
     src = "global_ops_f32.mlir",
     flags = [
         "--compile-mode=vm",
+        "--iree-vm-target-extension-f32=true",
+    ],
+)
+
+iree_bytecode_module(
+    name = "global_ops_f64",
+    src = "global_ops_f64.mlir",
+    flags = [
+        "--compile-mode=vm",
+        "--iree-vm-target-extension-f64=true",
     ],
 )
 
@@ -248,7 +303,7 @@ iree_bytecode_module(
     ],
 )
 
-c_embed_data(
+iree_c_embed_data(
     name = "async_bytecode_modules_c",
     srcs = [
         ":async_ops.vmfb",

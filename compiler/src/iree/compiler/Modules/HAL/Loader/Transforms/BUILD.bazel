@@ -23,6 +23,7 @@ iree_compiler_cc_library(
     hdrs = ["Passes.h"],
     deps = [
         ":PassHeaders",
+        "//compiler/src/iree/compiler/Dialect/HAL/Conversion",
         "//compiler/src/iree/compiler/Dialect/HAL/Conversion/StandardToHAL",
         "//compiler/src/iree/compiler/Dialect/HAL/Conversion/UtilToHAL",
         "//compiler/src/iree/compiler/Dialect/HAL/IR:HALDialect",
@@ -47,6 +48,7 @@ iree_compiler_cc_library(
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncTransforms",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MathTransforms",
@@ -55,6 +57,7 @@ iree_compiler_cc_library(
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:SCFToControlFlow",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
     ],
 )
@@ -62,7 +65,6 @@ iree_compiler_cc_library(
 iree_compiler_cc_library(
     name = "PassHeaders",
     hdrs = [
-        "PassDetail.h",
         "Passes.h",
         "Passes.h.inc",
     ],

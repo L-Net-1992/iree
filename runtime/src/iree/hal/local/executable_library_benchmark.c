@@ -12,13 +12,11 @@
 #include "iree/base/api.h"
 #include "iree/base/internal/file_io.h"
 #include "iree/base/internal/flags.h"
-#include "iree/base/tracing.h"
 #include "iree/hal/api.h"
 #include "iree/hal/local/executable_library.h"
 #include "iree/hal/local/executable_loader.h"
 #include "iree/hal/local/loaders/registration/init.h"
 #include "iree/hal/local/local_executable.h"
-#include "iree/hal/local/local_pipeline_layout.h"
 #include "iree/hal/local/plugins/registration/init.h"
 #include "iree/testing/benchmark.h"
 
@@ -50,53 +48,47 @@ IREE_FLAG(int32_t, workgroup_size_z, 1,
 IREE_FLAG(int32_t, max_concurrency, 1,
           "Maximum available concurrency exposed to the dispatch.");
 
-// Total number of bindings we (currently) allow any executable to have.
-#define IREE_HAL_LOCAL_MAX_TOTAL_BINDING_COUNT \
-  (IREE_HAL_LOCAL_MAX_DESCRIPTOR_SET_COUNT *   \
-   IREE_HAL_LOCAL_MAX_DESCRIPTOR_BINDING_COUNT)
-
 // Parsed parameters from flags.
 // Used to construct the dispatch parameters for the benchmark invocation.
 struct {
-  int32_t push_constant_count;
+  int32_t constant_count;
   union {
     uint32_t ui32;
-  } push_constants[IREE_HAL_LOCAL_MAX_PUSH_CONSTANT_COUNT];
+  } constants[IREE_HAL_EXECUTABLE_MAX_CONSTANT_COUNT];
 
   int32_t binding_count;
-  iree_string_view_t bindings[IREE_HAL_LOCAL_MAX_TOTAL_BINDING_COUNT];
+  iree_string_view_t bindings[IREE_HAL_EXECUTABLE_MAX_BINDING_COUNT];
 } dispatch_params = {
-    .push_constant_count = 0,
+    .constant_count = 0,
     .binding_count = 0,
 };
 
-static iree_status_t parse_push_constant(iree_string_view_t flag_name,
-                                         void* storage,
-                                         iree_string_view_t value) {
-  IREE_ASSERT_LE(dispatch_params.push_constant_count + 1,
-                 IREE_ARRAYSIZE(dispatch_params.push_constants),
+static iree_status_t parse_constant(iree_string_view_t flag_name, void* storage,
+                                    iree_string_view_t value) {
+  IREE_ASSERT_LE(dispatch_params.constant_count + 1,
+                 IREE_ARRAYSIZE(dispatch_params.constants),
                  "too many push constants");
-  dispatch_params.push_constants[dispatch_params.push_constant_count++].ui32 =
+  dispatch_params.constants[dispatch_params.constant_count++].ui32 =
       atoi(value.data);
   return iree_ok_status();
 }
-static void print_push_constant(iree_string_view_t flag_name, void* storage,
-                                FILE* file) {
-  if (dispatch_params.push_constant_count == 0) {
+static void print_constant(iree_string_view_t flag_name, void* storage,
+                           FILE* file) {
+  if (dispatch_params.constant_count == 0) {
     fprintf(file, "# --%.*s=[integer value]\n", (int)flag_name.size,
             flag_name.data);
     return;
   }
-  for (int32_t i = 0; i < dispatch_params.push_constant_count; ++i) {
+  for (int32_t i = 0; i < dispatch_params.constant_count; ++i) {
     fprintf(file, "--%.*s=%u", (int)flag_name.size, flag_name.data,
-            dispatch_params.push_constants[i].ui32);
-    if (i < dispatch_params.push_constant_count - 1) {
+            dispatch_params.constants[i].ui32);
+    if (i < dispatch_params.constant_count - 1) {
       fprintf(file, "\n");
     }
   }
 }
-IREE_FLAG_CALLBACK(parse_push_constant, print_push_constant, &dispatch_params,
-                   push_constant_callback,
+IREE_FLAG_CALLBACK(parse_constant, print_constant, &dispatch_params,
+                   constant_callback,
                    "Appends a uint32_t push constant value.\n");
 
 static iree_status_t parse_binding(iree_string_view_t flag_name, void* storage,
@@ -162,14 +154,9 @@ static iree_status_t iree_hal_executable_library_run(
   // Load the executable data.
   iree_file_contents_t* file_contents = NULL;
   IREE_RETURN_IF_ERROR(iree_file_read_contents(FLAG_executable_file,
+                                               IREE_FILE_READ_FLAG_DEFAULT,
                                                host_allocator, &file_contents));
   executable_params.executable_data = file_contents->const_buffer;
-
-  // Setup the layouts defining how each entry point is interpreted.
-  // NOTE: we know for the embedded library loader that this is not required.
-  // Other loaders may need it in which case it'll have to be provided.
-  executable_params.pipeline_layout_count = 0;
-  executable_params.pipeline_layouts = NULL;
 
   // Perform the load, which will fail if the executable cannot be loaded or
   // there was an issue with the layouts.
@@ -186,7 +173,7 @@ static iree_status_t iree_hal_executable_library_run(
       local_executable->dispatch_attrs
           ? local_executable->dispatch_attrs[FLAG_entry_point]
                     .local_memory_pages *
-                IREE_HAL_WORKGROUP_LOCAL_MEMORY_PAGE_SIZE
+                IREE_HAL_EXECUTABLE_WORKGROUP_LOCAL_MEMORY_PAGE_SIZE
           : 0;
   if (local_memory_size > 0) {
     IREE_RETURN_IF_ERROR(iree_allocator_malloc(
@@ -201,12 +188,13 @@ static iree_status_t iree_hal_executable_library_run(
   IREE_RETURN_IF_ERROR(iree_hal_allocator_create_heap(
       iree_make_cstring_view("benchmark"), host_allocator, host_allocator,
       &heap_allocator));
-  iree_hal_buffer_view_t* buffer_views[IREE_HAL_LOCAL_MAX_TOTAL_BINDING_COUNT];
-  void* binding_ptrs[IREE_HAL_LOCAL_MAX_TOTAL_BINDING_COUNT];
-  size_t binding_lengths[IREE_HAL_LOCAL_MAX_TOTAL_BINDING_COUNT];
+  iree_hal_buffer_view_t* buffer_views[IREE_HAL_EXECUTABLE_MAX_BINDING_COUNT];
+  void* binding_ptrs[IREE_HAL_EXECUTABLE_MAX_BINDING_COUNT];
+  size_t binding_lengths[IREE_HAL_EXECUTABLE_MAX_BINDING_COUNT];
   for (iree_host_size_t i = 0; i < dispatch_params.binding_count; ++i) {
-    IREE_RETURN_IF_ERROR(iree_hal_buffer_view_parse(
-        dispatch_params.bindings[i], heap_allocator, &buffer_views[i]));
+    IREE_RETURN_IF_ERROR(
+        iree_hal_buffer_view_parse(dispatch_params.bindings[i], /*device=*/NULL,
+                                   heap_allocator, &buffer_views[i]));
     iree_hal_buffer_t* buffer = iree_hal_buffer_view_buffer(buffer_views[i]);
     iree_device_size_t buffer_length =
         iree_hal_buffer_view_byte_length(buffer_views[i]);
@@ -228,8 +216,8 @@ static iree_status_t iree_hal_executable_library_run(
       .workgroup_size_y = FLAG_workgroup_size_y,
       .workgroup_size_z = FLAG_workgroup_size_z,
       .max_concurrency = FLAG_max_concurrency,
-      .push_constant_count = dispatch_params.push_constant_count,
-      .push_constants = &dispatch_params.push_constants[0].ui32,
+      .constant_count = dispatch_params.constant_count,
+      .constants = &dispatch_params.constants[0].ui32,
       .binding_count = dispatch_params.binding_count,
       .binding_ptrs = binding_ptrs,
       .binding_lengths = binding_lengths,

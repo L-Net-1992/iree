@@ -6,20 +6,19 @@
 
 #include "iree/compiler/Codegen/Common/ExtractAddressComputation.h"
 
-#include "iree/compiler/Codegen/PassDetail.h"
-#include "iree/compiler/Codegen/Passes.h"
+#include "iree/compiler/Codegen/Common/Passes.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#define DEBUG_TYPE "extract-address-computation"
+#define DEBUG_TYPE "iree-codegen-extract-address-computation"
 
-using namespace mlir;
+namespace mlir::iree_compiler {
 
-namespace mlir {
-namespace iree_compiler {
+#define GEN_PASS_DEF_EXTRACTADDRESSCOMPUTATIONPASS
+#include "iree/compiler/Codegen/Common/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//
 // Helper functions for the `load base[off0...]`
@@ -71,8 +70,8 @@ static memref::StoreOp rebuildStoreOp(RewriterBase &rewriter,
                                           storeOp.getNontemporal());
 }
 
-SmallVector<OpFoldResult> getStoreOpViewSizeForEachDim(
-    RewriterBase &rewriter, memref::StoreOp storeOp) {
+SmallVector<OpFoldResult>
+getStoreOpViewSizeForEachDim(RewriterBase &rewriter, memref::StoreOp storeOp) {
   MemRefType ldTy = storeOp.getMemRefType();
   unsigned loadRank = ldTy.getRank();
   return SmallVector<OpFoldResult>(loadRank, rewriter.getIndexAttr(1));
@@ -97,23 +96,17 @@ void populateExtractAddressComputationPatterns(RewritePatternSet &patterns) {
 //===----------------------------------------------------------------------===//
 namespace {
 
-struct ExtractAddressComputationPass
-    : public ExtractAddressComputationBase<ExtractAddressComputationPass> {
+struct ExtractAddressComputationPass final
+    : impl::ExtractAddressComputationPassBase<ExtractAddressComputationPass> {
   void runOnOperation() override;
 };
-}  // namespace
+} // namespace
 
 void ExtractAddressComputationPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   populateExtractAddressComputationPatterns(patterns);
-  if (failed(
-          applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
+  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     return signalPassFailure();
   }
 }
-
-std::unique_ptr<Pass> createExtractAddressComputationPass() {
-  return std::make_unique<ExtractAddressComputationPass>();
-}
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler

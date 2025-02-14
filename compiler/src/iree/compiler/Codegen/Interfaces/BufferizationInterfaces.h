@@ -11,8 +11,7 @@
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/IR/Dialect.h"
 
-namespace mlir {
-namespace iree_compiler {
+namespace mlir::iree_compiler {
 
 struct IREEOneShotBufferizationOptions
     : public mlir::bufferization::OneShotBufferizationOptions {
@@ -23,12 +22,6 @@ struct IREEOneShotBufferizationOptions
 // Register all interfaces needed for bufferization.
 void registerBufferizationInterfaces(DialectRegistry &registry);
 
-// Eliminate tensor.empty ops that are anchored on flow store ops.
-LogicalResult storeTensorOpAnchoredEmptyTensorEliminationStep(
-    RewriterBase &rewriter, Operation *op,
-    bufferization::OneShotAnalysisState &state);
+} // namespace mlir::iree_compiler
 
-}  // namespace iree_compiler
-}  // namespace mlir
-
-#endif  // IREE_COMPILER_CODEGEN_INTERFACES_BUFFERIZATIONINTERFACES_H_
+#endif // IREE_COMPILER_CODEGEN_INTERFACES_BUFFERIZATIONINTERFACES_H_

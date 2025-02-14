@@ -63,7 +63,6 @@
 
 #include "iree/base/api.h"
 #include "iree/base/internal/flags.h"
-#include "iree/base/tracing.h"
 #include "iree/compiler/embedding_api.h"
 #include "iree/hal/api.h"
 #include "iree/tooling/context_util.h"
@@ -130,14 +129,13 @@ std::string InferTargetBackendFromDevice(iree_string_view_t device_uri) {
 // guesswork. If we can't produce a target backend flag value we bail.
 // Returns a comma-delimited list of target backends.
 StatusOr<std::string> InferTargetBackendsFromDevices(
-    iree_host_size_t device_flag_count,
-    const iree_string_view_t* device_flag_values) {
+    iree_string_view_list_t device_uris) {
   // No-op when no devices specified (probably no HAL).
-  if (device_flag_count == 0) return "";
+  if (device_uris.count == 0) return "";
   // If multiple devices were provided we need to target all of them.
   std::set<std::string> target_backends;
-  for (iree_host_size_t i = 0; i < device_flag_count; ++i) {
-    auto target_backend = InferTargetBackendFromDevice(device_flag_values[i]);
+  for (iree_host_size_t i = 0; i < device_uris.count; ++i) {
+    auto target_backend = InferTargetBackendFromDevice(device_uris.values[i]);
     if (!target_backend.empty()) {
       target_backends.insert(std::move(target_backend));
     }
@@ -177,20 +175,18 @@ Status ConfigureTargetBackends(iree_compiler_session_t* session,
 
   // Query the tooling utils for the --device= flag values. Note that zero or
   // more devices may be specified.
-  iree_host_size_t device_flag_count = 0;
-  const iree_string_view_t* device_flag_values = NULL;
-  iree_hal_get_devices_flag_list(&device_flag_count, &device_flag_values);
+  iree_string_view_list_t device_uris = iree_hal_device_flag_list();
 
   // No-op if no target backends or devices are specified - this can be an
   // intentional decision as the user may be running a program that doesn't use
   // the HAL.
-  if (target_backends_flag.empty() && device_flag_count == 0) {
+  if (target_backends_flag.empty() && device_uris.count == 0) {
     return OkStatus();
   }
 
   // No-op if both target backends and devices are set as the user has
   // explicitly specified a configuration.
-  if (!target_backends_flag.empty() && device_flag_count > 0) {
+  if (!target_backends_flag.empty() && device_uris.count > 0) {
     return OkStatus();
   }
 
@@ -198,7 +194,7 @@ Status ConfigureTargetBackends(iree_compiler_session_t* session,
   // the compiler configuration. This only works if there's a single backend
   // specified; if the user wants multiple target backends then they must
   // specify the device(s) to use.
-  if (device_flag_count == 0) {
+  if (device_uris.count == 0) {
     if (target_backends_flag.find(',') != std::string::npos) {
       return iree_make_status(
           IREE_STATUS_INVALID_ARGUMENT,
@@ -217,17 +213,17 @@ Status ConfigureTargetBackends(iree_compiler_session_t* session,
   // guesses. In the future we'll have more ways of configuring the compiler
   // from available runtime devices (not just the target backend but also
   // target-specific settings).
-  IREE_ASSIGN_OR_RETURN(
-      auto target_backends,
-      InferTargetBackendsFromDevices(device_flag_count, device_flag_values));
+  IREE_ASSIGN_OR_RETURN(auto target_backends,
+                        InferTargetBackendsFromDevices(device_uris));
   if (!target_backends.empty()) {
     auto target_backends_flag =
         std::string("--iree-hal-target-backends=") + target_backends;
     const char* compiler_argv[1] = {
         target_backends_flag.c_str(),
     };
-    if (auto error = ireeCompilerSessionSetFlags(
-            session, IREE_ARRAYSIZE(compiler_argv), compiler_argv)) {
+    auto error = ireeCompilerSessionSetFlags(
+        session, IREE_ARRAYSIZE(compiler_argv), compiler_argv);
+    if (error) {
       return iree_make_status(
           IREE_STATUS_INVALID_ARGUMENT,
           "unable to set inferred target backend flag to `%.*s`",
@@ -241,7 +237,7 @@ Status ConfigureTargetBackends(iree_compiler_session_t* session,
 // Runs the given .mlir file based on the current flags.
 StatusOr<int> CompileAndRunFile(iree_compiler_session_t* session,
                                 const char* mlir_filename) {
-  IREE_TRACE_SCOPE0("CompileAndRunFile");
+  IREE_TRACE_SCOPE_NAMED("CompileAndRunFile");
 
   // Configure the --iree-hal-target-backends= flag and/or get the default
   // device to use at runtime if either are not explicitly specified.
@@ -273,7 +269,7 @@ StatusOr<int> CompileAndRunFile(iree_compiler_session_t* session,
                      std::string_view while_performing = "") {
       const char* msg = ireeCompilerErrorGetMessage(error);
       fprintf(stderr, "error compiling input file: %s\n", msg);
-      iree_status_t status = iree_make_status(status_code, msg);
+      iree_status_t status = iree_make_status(status_code, "%s", msg);
       if (!while_performing.empty()) {
         status = iree_status_annotate(
             status, iree_make_string_view(while_performing.data(),
@@ -414,11 +410,11 @@ class ArgParser {
       } else if (starts_with("-Xcompiler,", current_arg) ||
                  starts_with("--Xcompiler,", current_arg)) {
         // Split and send the rest of the flag to the compiler.
-        AppendPrefixedArgs(current_arg, &compiler_args_);
+        AppendPrefixedArg(current_arg, &compiler_args_);
       } else if (starts_with("-Xruntime,", current_arg) ||
                  starts_with("--Xruntime,", current_arg)) {
         // Split and send the rest of the flag to the runtime.
-        AppendPrefixedArgs(current_arg, &runtime_args_);
+        AppendPrefixedArg(current_arg, &runtime_args_);
       } else {
         // Route to either runtime or compiler arg sets based on which side of
         // the -- we are on.
@@ -438,24 +434,15 @@ class ArgParser {
   }
 
  private:
-  // Drops the prefix from |prefixed_arg| and appends one or more to |out_args|.
-  // Example: --Xcompiler,ab=cd,ef=gh -> --ab=cd + --ef=gh
-  void AppendPrefixedArgs(std::string_view prefixed_arg,
-                          std::vector<char*>* out_args) {
-    auto append_flag_string = [&](std::string_view slice_arg) {
-      auto stable_arg = std::make_unique<std::string>("--");
-      stable_arg->append(slice_arg);
-      temp_strings_.push_back(std::move(stable_arg));
-      out_args->push_back(temp_strings_.back()->data());
-    };
+  // Drops the prefix from |prefixed_arg| and appends the arg to |out_args|.
+  // Example: --Xcompiler,ab=cd,ef -> --ab=cd,ef
+  void AppendPrefixedArg(std::string_view prefixed_arg,
+                         std::vector<char*>* out_args) {
     std::string_view sub_arg = prefixed_arg.substr(prefixed_arg.find(',') + 1);
-    for (;;) {
-      size_t comma_pos = sub_arg.find_first_of(',');
-      if (comma_pos == std::string_view::npos) break;
-      append_flag_string(sub_arg.substr(0, comma_pos));
-      sub_arg = sub_arg.substr(comma_pos + 1);
-    }
-    append_flag_string(sub_arg);
+    auto stable_arg = std::make_unique<std::string>("--");
+    stable_arg->append(sub_arg);
+    temp_strings_.push_back(std::move(stable_arg));
+    out_args->push_back(temp_strings_.back()->data());
   }
 
   std::vector<std::unique_ptr<std::string>> temp_strings_;
@@ -466,7 +453,8 @@ class ArgParser {
 }  // namespace
 
 extern "C" int main(int argc, char** argv) {
-  IREE_TRACE_SCOPE0("iree-run-mlir");
+  IREE_TRACE_APP_ENTER();
+  IREE_TRACE_ZONE_BEGIN_NAMED(z0, "iree-run-mlir");
 
   // Initialize the compiler once on startup before using any other APIs.
   ireeCompilerGlobalInitialize();
@@ -475,7 +463,9 @@ extern "C" int main(int argc, char** argv) {
   ArgParser arg_parser;
   if (!arg_parser.Parse(argc, argv)) {
     ireeCompilerGlobalShutdown();
-    return 1;
+    IREE_TRACE_ZONE_END(z0);
+    IREE_TRACE_APP_EXIT(EXIT_FAILURE);
+    return EXIT_FAILURE;
   }
 
   // Pass along compiler flags.
@@ -507,7 +497,9 @@ extern "C" int main(int argc, char** argv) {
             "Pass either the path to a .mlir/mlirbc file or `-` to read from "
             "stdin.\n");
     fflush(stderr);
-    return 1;
+    IREE_TRACE_ZONE_END(z0);
+    IREE_TRACE_APP_EXIT(EXIT_FAILURE);
+    return EXIT_FAILURE;
   }
   const char* source_filename = runtime_argv[1];
 
@@ -517,15 +509,15 @@ extern "C" int main(int argc, char** argv) {
   // The process return code is 0 for success and non-zero otherwise.
   // We don't differentiate between compiler or runtime error codes here but
   // could if someone found it useful.
-  int rc = EXIT_SUCCESS;
+  int exit_code = EXIT_SUCCESS;
 
   // Compile and run the provided source file and get the exit code determined
   // based on the run mode.
   auto status_or = CompileAndRunFile(session, source_filename);
   if (status_or.ok()) {
-    rc = status_or.value();
+    exit_code = status_or.value();
   } else {
-    rc = 2;
+    exit_code = 2;
     iree_status_fprint(stderr, status_or.status().get());
     fflush(stderr);
   }
@@ -534,7 +526,10 @@ extern "C" int main(int argc, char** argv) {
 
   // No more compiler APIs can be called after this point.
   ireeCompilerGlobalShutdown();
-  return rc;
+
+  IREE_TRACE_ZONE_END(z0);
+  IREE_TRACE_APP_EXIT(exit_code);
+  return exit_code;
 }
 
 }  // namespace iree

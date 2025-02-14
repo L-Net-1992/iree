@@ -24,12 +24,10 @@
 // `ret = lhs * rhs`
 //
 // Conforms to ABI:
-// #hal.pipeline.layout<push_constants = 1, sets = [
-//   <0, bindings = [
-//       <0, storage_buffer, ReadOnly>,
-//       <1, storage_buffer, ReadOnly>,
-//       <2, storage_buffer>
-//   ]>
+// #hal.pipeline.layout<constants = 1, bindings = [
+//   #hal.pipeline.binding<storage_buffer, ReadOnly>,
+//   #hal.pipeline.binding<storage_buffer, ReadOnly>,
+//   #hal.pipeline.binding<storage_buffer>
 // ]>
 // With a workgroup size of 64x1x1.
 //
@@ -43,7 +41,7 @@
 //
 // Expects a return of 0 on success and any other value indicates failure.
 // Try not to fail!
-static int simple_mul_workgroup(void* context, void* params_ptr,
+static int simple_mul_workgroup(void* params_ptr, void* context,
                                 void* reserved) {
   typedef struct {
     const float* restrict binding0;

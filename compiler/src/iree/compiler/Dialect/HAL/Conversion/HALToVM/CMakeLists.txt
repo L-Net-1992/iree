@@ -22,6 +22,7 @@ iree_cc_library(
     "ConvertChannelOps.cpp"
     "ConvertCommandBufferOps.cpp"
     "ConvertDeviceOps.cpp"
+    "ConvertDevicesOps.cpp"
     "ConvertExecutableOps.cpp"
     "ConvertExperimentalOps.cpp"
     "ConvertFenceOps.cpp"
@@ -30,16 +31,14 @@ iree_cc_library(
     LLVMSupport
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRPass
+    MLIRTransformUtils
     MLIRTransforms
     iree::compiler::Dialect::HAL::IR
-    iree::compiler::Dialect::HAL::Utils
-    iree::compiler::Dialect::HAL::hal_imports
     iree::compiler::Dialect::Util::IR
     iree::compiler::Dialect::VM::Conversion
-    iree::compiler::Dialect::VM::Conversion::StandardToVM
-    iree::compiler::Dialect::VM::Conversion::UtilToVM
     iree::compiler::Dialect::VM::IR
     iree::compiler::Utils
   PUBLIC

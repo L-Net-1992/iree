@@ -12,20 +12,21 @@ iree_add_all_subdirs()
 
 iree_cc_library(
   NAME
-    Embed
+    CompilerDriver
   HDRS
     "Diagnostics.h"
   SRCS
+    "CompilerDriver.cpp"
     "Diagnostics.cpp"
-    "Embed.cpp"
   DEPS
     LLVMSupport
     MLIRBuiltinToLLVMIRTranslation
+    MLIRBytecodeWriter
     MLIRCAPIIR
+    MLIRDebug
     MLIRIR
     MLIRParser
     MLIRSupport
-    iree::compiler::API::MLIRInteropHeaders
     iree::compiler::ConstEval
     iree::compiler::Dialect::VM::Target::Bytecode
     iree::compiler::Dialect::VM::Target::C
@@ -35,7 +36,6 @@ iree_cc_library(
     iree::compiler::PluginAPI::PluginManager
     iree::compiler::Tools::init_llvmir_translations
     iree::compiler::Tools::init_passes_and_dialects
-    iree::compiler::Tools::init_targets
     iree::compiler::Tools::version
     iree::compiler::Utils
     iree::compiler::bindings::c::headers
@@ -79,9 +79,58 @@ iree_cc_library(
     MLIROptLib
     MLIRPass
     MLIRSupport
+    iree::compiler::Dialect::HAL::Target
+    iree::compiler::Dialect::VM::Target::init_targets
     iree::compiler::PluginAPI::PluginManager
+    iree::compiler::Tools::init_llvmir_translations
     iree::compiler::Tools::init_passes_and_dialects
-    iree::compiler::Tools::init_targets
+    iree::compiler::bindings::c::headers
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    IREEReduceToolEntryPoint
+  SRCS
+    "IREEReduceToolEntryPoint.cpp"
+  DEPS
+    LLVMSupport
+    MLIRBytecodeWriter
+    MLIRIR
+    MLIRParser
+    MLIRPass
+    MLIRSupport
+    iree::compiler::Reducer::iree_reduce_lib
+    iree::compiler::Tools::init_passes_and_dialects
+    iree::compiler::bindings::c::headers
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    IREECodegenDialectCAPI
+  SRCS
+    "IREECodegenDialectCAPI.cpp"
+  DEPS
+    IREELLVMIncludeSetup
+    MLIRCAPIIR
+    MLIRIR
+    iree::compiler::Codegen::Dialect::Codegen::IR::IREECodegenDialect
+    iree::compiler::Codegen::Utils
+    iree::compiler::bindings::c::headers
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    IREEGPUDialectCAPI
+  SRCS
+    "IREEGPUDialectCAPI.cpp"
+  DEPS
+    IREELLVMIncludeSetup
+    MLIRCAPIIR
+    MLIRIR
+    iree::compiler::Codegen::Dialect::GPU::IR::IREEGPUDialect
     iree::compiler::bindings::c::headers
   PUBLIC
 )
@@ -91,16 +140,18 @@ iree_cc_library(
 set(_lld_copts)
 set(_lld_deps)
 
-if(IREE_LLD_TARGET)
+# TODO(#14086): implement linking in the installed-LLVM case.
+if(IREE_BUILD_BUNDLED_LLVM)
   # Use generator expressions to conditionally include LLD targets, providing
   # a compiler definition if not available.
   macro(_add_dependent_lld_target target not_definition)
     list(APPEND _lld_deps
-      $<TARGET_NAME_IF_EXISTS:${target}>)
+      $<TARGET_NAME_IF_EXISTS:${target}>
+      $<IF:$<TARGET_EXISTS:${target}>,lldCommon,>
+    )
     list(APPEND _lld_copts
       $<IF:$<TARGET_EXISTS:${target}>,,-D${not_definition}>)
   endmacro()
-  list(APPEND _lld_deps lldCommon)
   _add_dependent_lld_target(lldCOFF IREE_COMPILER_LLD_COFF_DISABLED)
   _add_dependent_lld_target(lldELF IREE_COMPILER_LLD_ELF_DISABLED)
   _add_dependent_lld_target(lldMachO IREE_COMPILER_LLD_MACHO_DISABLED)

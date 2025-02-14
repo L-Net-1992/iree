@@ -30,7 +30,6 @@ iree_cc_library(
   DEPS
     ::vm
     iree::base
-    iree::base::core_headers
     iree::base::internal::span
   PUBLIC
 )
@@ -66,10 +65,8 @@ iree_cc_library(
     "stack.c"
   DEPS
     iree::base
-    iree::base::core_headers
     iree::base::internal
     iree::base::internal::synchronization
-    iree::base::tracing
   PUBLIC
 )
 
@@ -132,8 +129,8 @@ iree_cc_binary_benchmark(
   DEPS
     ::impl
     ::native_module_test_hdrs
-    benchmark
     iree::base
+    iree::testing::benchmark
     iree::testing::benchmark_main
   TESTONLY
 )

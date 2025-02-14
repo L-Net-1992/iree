@@ -30,7 +30,8 @@ set_target_properties(iree_samples_custom_dispatch_cpu_system_plugin
     OUTPUT_NAME "system_plugin"
 )
 
-add_dependencies(iree-sample-deps iree_samples_custom_dispatch_cpu_system_plugin)
+add_dependencies(iree-sample-deps
+  iree_samples_custom_dispatch_cpu_system_plugin)
 
 iree_lit_test_suite(
   NAME
@@ -66,12 +67,12 @@ endif(IREE_HAL_EXECUTABLE_PLUGIN_SYSTEM_LIBRARY)
 
 # embedded-elf plugin mechanism for standalone portable ELFs.
 # We use the same flags we do in the compiler for our embedded elfs found under
-# compiler/src/iree/compiler/Dialect/HAL/Target/LLVMCPU/internal/EmbeddedLinkerTool.cpp
+# compiler/plugins/target/LLVMCPU/internal/EmbeddedLinkerTool.cpp
 if(IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF)
 
-# This only builds for x86-64/arm_64 because that's all we have coded in here.
-if(NOT IREE_ARCH STREQUAL "arm_64" AND NOT IREE_ARCH STREQUAL "x86_64")
-  message(STATUS "IREE custom_dispatch/cpu/plugin standalone example ignored -- only builds for x86_64/arm_64 (today)")
+# This only builds for x86-64/arm_64/riscv_64 because that's all we have coded in here.
+if(NOT IREE_ARCH STREQUAL "arm_64" AND NOT IREE_ARCH STREQUAL "x86_64" AND NOT IREE_ARCH STREQUAL "riscv_64")
+  message(STATUS "IREE custom_dispatch/cpu/plugin standalone example ignored -- only builds for x86_64/arm_64/riscv_64 (today)")
   return()
 endif()
 
@@ -81,22 +82,28 @@ if(MSVC)
   return()
 endif()
 
-function(standalone_plugin_library _ARCH)
-  set(_NAME iree_samples_custom_dispatch_cpu_standalone_plugin_${_ARCH})
-  if (_ARCH STREQUAL "arm_64")
-    set(LLVM_ARCH "aarch64")
-  else()
-    set(LLVM_ARCH "${_ARCH}")
+# standalone_plugin_library()
+#
+# Creates the architecture-specific part of the standalone plugin, for the given
+# architecture (as in IREE_ARCH), and appends the generated library filename to
+# the output-variable _DST_VAR_ARCH_LIBRARIES. Skips if the compiler does not
+# support the specified architecture.
+function(standalone_plugin_library _DST_VAR_ARCH_LIBRARIES _ARCH _CFLAGS)
+  iree_compiler_targeting_iree_arch(_ENABLED "${_ARCH}")
+  if(NOT _ENABLED)
+    return()
   endif()
+  set(_NAME iree_samples_custom_dispatch_cpu_standalone_plugin_${_ARCH})
+  iree_arch_to_llvm_arch(LLVM_ARCH "${_ARCH}")
   add_custom_command(
     OUTPUT
       standalone_plugin_${_ARCH}.o
     DEPENDS
       standalone_plugin.c
       ${IREE_CLANG_TARGET}
-    COMMAND ${IREE_CLANG_TARGET}
-      -target ${LLVM_ARCH}-unknown-unknown-eabi-elf
-      -isystem ${IREE_BINARY_DIR}/third_party/llvm-project/llvm/lib/clang/17/include
+    COMMAND ${IREE_CLANG_BINARY}
+      -target ${LLVM_ARCH}-none-elf
+      -isystem ${IREE_CLANG_BUILTIN_HEADERS_PATH}
       -std=c17
       -fPIC
       -ffreestanding
@@ -107,18 +114,20 @@ function(standalone_plugin_library _ARCH)
       -fdata-sections
       -ffunction-sections
       -funique-section-names
+      ${_CFLAGS}
       -I ${IREE_SOURCE_DIR}/runtime/src/
       -c ${CMAKE_CURRENT_SOURCE_DIR}/standalone_plugin.c
       -o ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_${_ARCH}.o
     VERBATIM
   )
+  set(_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_${_ARCH}.so")
   add_custom_command(
     OUTPUT
       standalone_plugin_${_ARCH}.so
     DEPENDS
       standalone_plugin_${_ARCH}.o
       ${IREE_LLD_TARGET}
-    COMMAND ${IREE_LLD_TARGET}
+    COMMAND ${IREE_LLD_BINARY}
       -flavor gnu
       --build-id=none
       -nostdlib
@@ -137,28 +146,34 @@ function(standalone_plugin_library _ARCH)
       --hash-style=sysv
       --strip-debug
       ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_${_ARCH}.o
-      -o ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_${_ARCH}.so
+      -o "${_LIBRARY}"
     VERBATIM
   )
   add_custom_target(${_NAME} DEPENDS
-    ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_${_ARCH}.so
+    "${_LIBRARY}"
   )
+  set(_LOCAL_ARCH_LIBRARIES "${${_DST_VAR_ARCH_LIBRARIES}}")
+  list(APPEND _LOCAL_ARCH_LIBRARIES "${_LIBRARY}")
+  set("${_DST_VAR_ARCH_LIBRARIES}" "${_LOCAL_ARCH_LIBRARIES}" PARENT_SCOPE)
 endfunction()
 
 # Build the standalone_plugin_*.so files for each architecture we target.
-standalone_plugin_library(arm_64)
-standalone_plugin_library(x86_64)
+set(_STANDALONE_PLUGIN_ARCH_LIBRARIES "")
+
+
+set(RISCV_STANDALONE_PLUGIN_ARCH_C_FLAGS -march=rv64i2p1ma2p1f2p2d2p2c2p0)
+standalone_plugin_library(_STANDALONE_PLUGIN_ARCH_LIBRARIES arm_64 "")
+standalone_plugin_library(_STANDALONE_PLUGIN_ARCH_LIBRARIES x86_64 "")
+standalone_plugin_library(_STANDALONE_PLUGIN_ARCH_LIBRARIES riscv_64 "${RISCV_STANDALONE_PLUGIN_ARCH_C_FLAGS}")
 
 add_custom_command(
   OUTPUT
     standalone_plugin.sos
   DEPENDS
-    ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_arm_64.so
-    ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_x86_64.so
+    ${_STANDALONE_PLUGIN_ARCH_LIBRARIES}
     iree-fatelf
   COMMAND iree-fatelf join
-    ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_arm_64.so
-    ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin_x86_64.so
+    ${_STANDALONE_PLUGIN_ARCH_LIBRARIES}
     > ${CMAKE_CURRENT_BINARY_DIR}/standalone_plugin.sos
   VERBATIM
 )

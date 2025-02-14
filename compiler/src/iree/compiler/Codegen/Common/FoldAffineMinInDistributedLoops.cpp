@@ -14,8 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "iree/compiler/Codegen/PassDetail.h"
-#include "iree/compiler/Codegen/Passes.h"
+#include "iree/compiler/Codegen/Common/Passes.h"
 #include "iree/compiler/Codegen/Utils/Utils.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "llvm/ADT/STLExtras.h"
@@ -23,7 +22,6 @@
 #include "mlir/Dialect/Affine/Analysis/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/IR/AffineValueMap.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/SCF/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/Utils/AffineCanonicalizationUtils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -34,17 +32,10 @@
 
 #define DEBUG_TYPE "iree-codegen-fold-affinemin-in-distributed-loops"
 
-namespace mlir {
-namespace iree_compiler {
+namespace mlir::iree_compiler {
 
-/// Gets the given `attrOrValue` as a Value by creating constant ops for
-/// attributes.
-static Value getAsValue(OpFoldResult attrOrValue, OpBuilder &builder,
-                        Location loc) {
-  if (Value val = attrOrValue.dyn_cast<Value>()) return val;
-  auto attr = attrOrValue.get<Attribute>().cast<IntegerAttr>();
-  return builder.create<arith::ConstantIndexOp>(loc, attr.getInt());
-}
+#define GEN_PASS_DEF_FOLDAFFINEMININDISTRIBUTEDLOOPSPASS
+#include "iree/compiler/Codegen/Common/Passes.h.inc"
 
 #ifndef NDEBUG
 inline raw_ostream &operator<<(raw_ostream &os,
@@ -59,14 +50,15 @@ inline raw_ostream &operator<<(raw_ostream &os,
 }
 #endif
 
-static FailureOr<affine::AffineApplyOp> canonicalizeMinMaxOp(
-    RewriterBase &rewriter, Operation *op,
-    affine::FlatAffineValueConstraints constraints) {
+static FailureOr<affine::AffineApplyOp>
+canonicalizeMinMaxOp(RewriterBase &rewriter, Operation *op,
+                     affine::FlatAffineValueConstraints constraints) {
   RewriterBase::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(op);
   FailureOr<affine::AffineValueMap> simplified =
       mlir::affine::simplifyConstrainedMinMaxOp(op, std::move(constraints));
-  if (failed(simplified)) return failure();
+  if (failed(simplified))
+    return failure();
   return rewriter.replaceOpWithNewOp<affine::AffineApplyOp>(
       op, simplified->getAffineMap(), simplified->getOperands());
 }
@@ -97,18 +89,22 @@ struct FoldAffineMinOverDistributedLoopInductionVariable final
     auto loopMatcher = [&](Value iv, OpFoldResult &lb, OpFoldResult &ub,
                            OpFoldResult &step) {
       scf::ForOp forOp = scf::getForInductionVarOwner(iv);
-      if (!forOp) return failure();
+      if (!forOp)
+        return failure();
 
       auto loopInfo = isTiledAndDistributedLoop(forOp);
-      if (!loopInfo) return failure();
+      if (!loopInfo)
+        return failure();
       LLVM_DEBUG(llvm::dbgs() << *loopInfo);
 
       std::optional<int64_t> untiledStep =
           getConstantIntValue(loopInfo->untiledStep);
       // For IREE right now the original untiled loop should have step 1..
-      if (!untiledStep || *untiledStep != 1) return failure();
+      if (!untiledStep || *untiledStep != 1)
+        return failure();
       // ..and we tile according to some static tile sizes for processors.
-      if (!loopInfo->tileSize) return failure();
+      if (!loopInfo->tileSize)
+        return failure();
 
       lb = loopInfo->untiledLowerBound;
       ub = loopInfo->untiledUpperBound;
@@ -136,12 +132,17 @@ struct FoldAffineMinOverWorkgroupIDs final
     // Find all iteration variables among `minOp`'s operands add constrain them.
     for (Value operand : minOp->getOperands()) {
       // Skip duplicate ids.
-      if (!allIds.insert(operand).second) continue;
+      if (!allIds.insert(operand).second)
+        continue;
       auto idOp = operand.getDefiningOp<IREE::HAL::InterfaceWorkgroupIDOp>();
-      if (!idOp) continue;
+      if (!idOp)
+        continue;
       // Can't infer the range when workroupCount is unknown.
       unsigned index = idOp.getDimension().getZExtValue();
-      if (index >= numWorkgroup.size()) return failure();
+      if (index >= numWorkgroup.size())
+        return failure();
+      if (numWorkgroup[index] == ShapedType::kDynamic)
+        continue;
       constraints.appendDimVar({idOp});
       constraints.addBound(presburger::BoundType::LB, idOp, 0);
       constraints.addBound(presburger::BoundType::UB, idOp,
@@ -150,19 +151,18 @@ struct FoldAffineMinOverWorkgroupIDs final
     return canonicalizeMinMaxOp(rewriter, minOp, constraints);
   }
 
- private:
+private:
   ArrayRef<int64_t> numWorkgroup;
 };
 
 struct FoldAffineMinInDistributedLoopsPass final
-    : public FoldAffineMinInDistributedLoopsBase<
+    : impl::FoldAffineMinInDistributedLoopsPassBase<
           FoldAffineMinInDistributedLoopsPass> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     SmallVector<int64_t> numWorkgroups = getStaticNumWorkgroups(getOperation());
     populateFoldAffineMinInDistributedLoopsPatterns(patterns, numWorkgroups);
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       // TODO(#4759): This does not converge after the max number of iterations.
       // It indicates that some pattern upstream is generating ops even when the
       // pattern failed to match. Not related to correctness, but would be good
@@ -171,7 +171,7 @@ struct FoldAffineMinInDistributedLoopsPass final
     }
   }
 };
-}  // namespace
+} // namespace
 
 void populateFoldAffineMinInDistributedLoopsPatterns(
     RewritePatternSet &patterns, ArrayRef<int64_t> numWorkgroups) {
@@ -182,11 +182,4 @@ void populateFoldAffineMinInDistributedLoopsPatterns(
                                                 numWorkgroups);
   }
 }
-
-std::unique_ptr<OperationPass<func::FuncOp>>
-createFoldAffineMinInDistributedLoopsPass() {
-  return std::make_unique<FoldAffineMinInDistributedLoopsPass>();
-}
-
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler

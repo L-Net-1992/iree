@@ -20,13 +20,14 @@ iree_check_single_backend_test_suite(
         "dot_f16.mlir",
     ],
     compiler_flags = [
-        "--iree-input-type=mhlo",
-        "--iree-vulkan-target-triple=valhall-unknown-android31",
+        "--iree-input-type=stablehlo",
+        "--iree-vulkan-target=valhall",
     ],
     driver = "vulkan",
     tags = [
         "manual",
         "notap",
+        "vulkan_uses_vk_khr_16bit_storage",
         "vulkan_uses_vk_khr_shader_float16_int8",
     ],
     target_backend = "vulkan-spirv",
@@ -38,8 +39,8 @@ iree_check_single_backend_test_suite(
         "conv.mlir",
     ],
     compiler_flags = [
-        "--iree-input-type=mhlo",
-        "--iree-vulkan-target-triple=valhall-unknown-android31",
+        "--iree-input-type=stablehlo",
+        "--iree-vulkan-target=valhall",
     ],
     driver = "vulkan",
     target_backend = "vulkan-spirv",
@@ -52,9 +53,9 @@ iree_check_single_backend_test_suite(
         "mul_i64.mlir",
     ],
     compiler_flags = [
-        "--iree-input-type=mhlo",
-        "--iree-mhlo-demote-i64-to-i32=false",
-        "--iree-vulkan-target-triple=valhall-unknown-android31",
+        "--iree-input-type=stablehlo",
+        "--iree-input-demote-i64-to-i32=false",
+        "--iree-vulkan-target=valhall",
     ],
     driver = "vulkan",
     tags = [

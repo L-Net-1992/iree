@@ -7,7 +7,6 @@
 #include "iree/vm/dynamic/module.h"
 
 #include "iree/base/internal/dynamic_library.h"
-#include "iree/base/tracing.h"
 
 typedef struct {
   // Interface containing local function pointers.
@@ -50,9 +49,9 @@ static iree_status_t iree_vm_dynamic_module_instantiate(
   // Try to create the module, which may fail if the version is incompatible or
   // the parameters are invalid.
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
-      z0,
-      create_fn(IREE_VM_DYNAMIC_MODULE_VERSION_LATEST, instance, param_count,
-                params, module->allocator, &module->user_module));
+      z0, iree_status_freeze(create_fn(
+              IREE_VM_DYNAMIC_MODULE_VERSION_LATEST, instance, param_count,
+              params, module->allocator, &module->user_module)));
 
   IREE_TRACE_ZONE_END(z0);
   return iree_ok_status();
@@ -92,16 +91,16 @@ iree_vm_dynamic_module_signature(void* self) {
 static iree_status_t IREE_API_PTR iree_vm_dynamic_module_get_module_attr(
     void* self, iree_host_size_t index, iree_string_pair_t* out_attr) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->get_module_attr(module->user_module->self, index,
-                                              out_attr);
+  return iree_status_freeze(module->user_module->get_module_attr(
+      module->user_module->self, index, out_attr));
 }
 
 static iree_status_t iree_vm_dynamic_module_enumerate_dependencies(
     void* self, iree_vm_module_dependency_callback_t callback,
     void* user_data) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->enumerate_dependencies(module->user_module->self,
-                                                     callback, user_data);
+  return iree_status_freeze(module->user_module->enumerate_dependencies(
+      module->user_module->self, callback, user_data));
 }
 
 static iree_status_t IREE_API_PTR iree_vm_dynamic_module_get_function(
@@ -109,9 +108,9 @@ static iree_status_t IREE_API_PTR iree_vm_dynamic_module_get_function(
     iree_vm_function_t* out_function, iree_string_view_t* out_name,
     iree_vm_function_signature_t* out_signature) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  IREE_RETURN_IF_ERROR(module->user_module->get_function(
+  IREE_RETURN_IF_ERROR(iree_status_freeze(module->user_module->get_function(
       module->user_module->self, linkage, ordinal, out_function, out_name,
-      out_signature));
+      out_signature)));
   if (out_function) out_function->module = (iree_vm_module_t*)self;
   return iree_ok_status();
 }
@@ -120,35 +119,43 @@ static iree_status_t IREE_API_PTR iree_vm_dynamic_module_get_function_attr(
     void* self, iree_vm_function_linkage_t linkage, iree_host_size_t ordinal,
     iree_host_size_t index, iree_string_pair_t* out_attr) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->get_function_attr(
-      module->user_module->self, linkage, ordinal, index, out_attr);
+  if (!module->user_module->get_function_attr) {
+    return iree_make_status(IREE_STATUS_NOT_FOUND);
+  }
+  return iree_status_freeze(module->user_module->get_function_attr(
+      module->user_module->self, linkage, ordinal, index, out_attr));
 }
 
 static iree_status_t IREE_API_PTR iree_vm_dynamic_module_lookup_function(
     void* self, iree_vm_function_linkage_t linkage, iree_string_view_t name,
+    const iree_vm_function_signature_t* expected_signature,
     iree_vm_function_t* out_function) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  IREE_RETURN_IF_ERROR(module->user_module->lookup_function(
-      module->user_module->self, linkage, name, out_function));
+  IREE_RETURN_IF_ERROR(iree_status_freeze(module->user_module->lookup_function(
+      module->user_module->self, linkage, name, expected_signature,
+      out_function)));
   out_function->module = (iree_vm_module_t*)self;
   return iree_ok_status();
 }
 
 static iree_status_t IREE_API_PTR
 iree_vm_dynamic_module_resolve_source_location(
-    void* self, iree_vm_stack_frame_t* frame,
+    void* self, iree_vm_function_t function, iree_vm_source_offset_t pc,
     iree_vm_source_location_t* out_source_location) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->resolve_source_location(
-      module->user_module->self, frame, out_source_location);
+  if (module->user_module->resolve_source_location) {
+    return iree_status_freeze(module->user_module->resolve_source_location(
+        module->user_module->self, function, pc, out_source_location));
+  }
+  return iree_status_from_code(IREE_STATUS_UNAVAILABLE);
 }
 
 static iree_status_t IREE_API_PTR
 iree_vm_dynamic_module_alloc_state(void* self, iree_allocator_t allocator,
                                    iree_vm_module_state_t** out_module_state) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->alloc_state(module->user_module->self, allocator,
-                                          out_module_state);
+  return iree_status_freeze(module->user_module->alloc_state(
+      module->user_module->self, allocator, out_module_state));
 }
 
 static void IREE_API_PTR iree_vm_dynamic_module_free_state(
@@ -157,34 +164,42 @@ static void IREE_API_PTR iree_vm_dynamic_module_free_state(
   module->user_module->free_state(module->user_module->self, module_state);
 }
 
+static iree_status_t IREE_API_PTR iree_vm_dynamic_module_fork_state(
+    void* self, iree_vm_module_state_t* parent_state,
+    iree_allocator_t allocator, iree_vm_module_state_t** out_child_state) {
+  iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
+  return iree_status_freeze(module->user_module->fork_state(
+      module->user_module->self, parent_state, allocator, out_child_state));
+}
+
 static iree_status_t IREE_API_PTR iree_vm_dynamic_module_resolve_import(
     void* self, iree_vm_module_state_t* module_state, iree_host_size_t ordinal,
     const iree_vm_function_t* function,
     const iree_vm_function_signature_t* signature) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->resolve_import(
-      module->user_module->self, module_state, ordinal, function, signature);
+  return iree_status_freeze(module->user_module->resolve_import(
+      module->user_module->self, module_state, ordinal, function, signature));
 }
 
 static iree_status_t IREE_API_PTR iree_vm_dynamic_module_notify(
     void* self, iree_vm_module_state_t* module_state, iree_vm_signal_t signal) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->notify(module->user_module->self, module_state,
-                                     signal);
+  return iree_status_freeze(module->user_module->notify(
+      module->user_module->self, module_state, signal));
 }
 
 static iree_status_t IREE_API_PTR iree_vm_dynamic_module_begin_call(
     void* self, iree_vm_stack_t* stack, iree_vm_function_call_t call) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->begin_call(module->user_module->self, stack,
-                                         call);
+  return iree_status_freeze(
+      module->user_module->begin_call(module->user_module->self, stack, call));
 }
 
 static iree_status_t IREE_API_PTR iree_vm_dynamic_module_resume_call(
     void* self, iree_vm_stack_t* stack, iree_byte_span_t call_results) {
   iree_vm_dynamic_module_t* module = (iree_vm_dynamic_module_t*)self;
-  return module->user_module->resume_call(module->user_module->self, stack,
-                                          call_results);
+  return iree_status_freeze(module->user_module->resume_call(
+      module->user_module->self, stack, call_results));
 }
 
 static iree_status_t iree_vm_dynamic_module_create(
@@ -223,6 +238,7 @@ static iree_status_t iree_vm_dynamic_module_create(
       iree_vm_dynamic_module_resolve_source_location;
   module->interface.alloc_state = iree_vm_dynamic_module_alloc_state;
   module->interface.free_state = iree_vm_dynamic_module_free_state;
+  module->interface.fork_state = iree_vm_dynamic_module_fork_state;
   module->interface.resolve_import = iree_vm_dynamic_module_resolve_import;
   module->interface.notify = iree_vm_dynamic_module_notify;
   module->interface.begin_call = iree_vm_dynamic_module_begin_call;

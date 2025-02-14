@@ -109,9 +109,54 @@ function(iree_arch_to_llvm_arch DST_LLVM_ARCH_VARIABLE SRC_ARCH)
     set(${DST_LLVM_ARCH_VARIABLE} "riscv64" PARENT_SCOPE)
   elseif("${SRC_ARCH}" STREQUAL "riscv_32")
     set(${DST_LLVM_ARCH_VARIABLE} "riscv32" PARENT_SCOPE)
+  elseif("${SRC_ARCH}" STREQUAL "wasm_64")
+    set(${DST_LLVM_ARCH_VARIABLE} "wasm64" PARENT_SCOPE)
+  elseif("${SRC_ARCH}" STREQUAL "wasm_32")
+    set(${DST_LLVM_ARCH_VARIABLE} "wasm32" PARENT_SCOPE)
   else()
     message(SEND_ERROR "What is the LLVM name of the architecture that we call ${SRC_ARCH} ?")
     set(${DST_LLVM_ARCH_VARIABLE} "unknown" PARENT_SCOPE)
+  endif()
+endfunction()
+
+# iree_arch_to_llvm_target()
+#
+# Helper mapping an architecture in IREE's naming scheme (as in IREE_ARCH)
+# to a LLVM CPU target (as in LLVM_TARGETS_TO_BUILD, the CMake variable).
+function(iree_arch_to_llvm_target DST_LLVM_TARGET_VARIABLE SRC_ARCH)
+  if("${SRC_ARCH}" STREQUAL "arm_64")
+    set(${DST_LLVM_TARGET_VARIABLE} "AArch64" PARENT_SCOPE)
+  elseif("${SRC_ARCH}" STREQUAL "arm_32")
+    set(${DST_LLVM_TARGET_VARIABLE} "ARM" PARENT_SCOPE)
+  elseif("${SRC_ARCH}" MATCHES "^x86_")
+    set(${DST_LLVM_TARGET_VARIABLE} "X86" PARENT_SCOPE)
+  elseif("${SRC_ARCH}" MATCHES "^riscv_")
+    set(${DST_LLVM_TARGET_VARIABLE} "RISCV" PARENT_SCOPE)
+  elseif("${SRC_ARCH}" MATCHES "^wasm_")
+    set(${DST_LLVM_TARGET_VARIABLE} "WebAssembly" PARENT_SCOPE)
+  else()
+    message(SEND_ERROR "What is the LLVM target handling of the architecture that we call ${SRC_ARCH} ?")
+    set(${DST_LLVM_TARGET_VARIABLE} "" PARENT_SCOPE)
+  endif()
+endfunction()
+
+# iree_compiler_targeting_iree_arch
+#
+# Helper returning true if we are building the IREE compiler with the llvm-cpu
+# backend enabled and with the LLVM target supporting the CPU architecture
+# give in IREE's naming scheme (as in IREE_ARCH).
+function(iree_compiler_targeting_iree_arch DST_VAR SRC_ARCH)
+  if (NOT IREE_BUILD_COMPILER OR NOT IREE_TARGET_BACKEND_LLVM_CPU)
+    set(${DST_VAR} OFF PARENT_SCOPE)
+    return()
+  endif()
+
+  iree_arch_to_llvm_target(_LLVM_TARGET "${SRC_ARCH}")
+  # WebAssembly is unconditionally enabled, and not enumerated in LLVM_TARGETS_TO_BUILD.
+  if (_LLVM_TARGET IN_LIST LLVM_TARGETS_TO_BUILD OR _LLVM_TARGET STREQUAL "WebAssembly")
+    set(${DST_VAR} ON PARENT_SCOPE)
+  else()
+    set(${DST_VAR} OFF PARENT_SCOPE)
   endif()
 endfunction()
 
@@ -145,6 +190,91 @@ endfunction()
 #-------------------------------------------------------------------------------
 # Packages and Paths
 #-------------------------------------------------------------------------------
+
+# Performs a variety of setup tasks for a directory that forms the root
+# of a C source tree. Many of our build macros use directory-scoped CMake
+# variables to drive default behavior, and this sets those up in a consolidated
+# way.
+# Arguments:
+# DEFAULT_EXPORT_SET:
+#   The export set to use by default. If linking any static libraries
+#   that are to be installed as dev libraries, then this is mandatory
+#   (or each target must specify it). Typically this must be set in
+#   runtime directories.
+# DEFAULT_INSTALL_COMPONENT:
+#   The default install component for libraries.
+# IMPLICIT_DEFS_TARGET:
+#   A new target to create and export/install which includes the current
+#   source and binary directory as an include dir. It will be added to
+#   every cc library created after this in this directory tree.
+# IMPLICIT_DEFS_INSTALL_COMPONENT:
+#   Install component for *just* the implicit defs target.
+# IMPLICIT_DEFS_EXPORT_SET:
+#   Export set for *just* the implicit defs target.
+# PACKAGE_ROOT_PREFIX:
+#   Explicitly set the package root prefix (as something like "iree::foobar").
+#   Default is empty.
+# See runtime/src/CMakeLists.txt for typical usage in a directory tree
+# that installs static dev libraries.
+#
+# See compiler/src/CMakeLists.txt for typical usage that does not install
+# static dev libraries.
+function(iree_setup_c_src_root)
+  cmake_parse_arguments(
+    _RULE
+    ""
+    "PACKAGE_ROOT_PREFIX;DEFAULT_EXPORT_SET;DEFAULT_INSTALL_COMPONENT;IMPLICIT_DEFS_TARGET;IMPLICIT_DEFS_INSTALL_COMPONENT;IMPLICIT_DEFS_EXPORT_SET"
+    ""
+    ${ARGN}
+  )
+
+  # Make C++ library package names start here unless if told not to.
+  set(IREE_PACKAGE_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}" PARENT_SCOPE)
+  set(IREE_PACKAGE_ROOT_PREFIX "${_RULE_PACKAGE_ROOT_PREFIX}" PARENT_SCOPE)
+
+  # Instruct install support that headers are installable from this root
+  # directory.
+  set(IREE_HDRS_ROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}" PARENT_SCOPE)
+
+  # Export and install by default.
+  if(_RULE_DEFAULT_EXPORT_SET)
+    set(IREE_INSTALL_LIBRARY_TARGETS_DEFAULT_EXPORT_SET
+      "${_RULE_DEFAULT_EXPORT_SET}"
+      PARENT_SCOPE)
+  endif()
+  if(_RULE_DEFAULT_INSTALL_COMPONENT)
+    set(IREE_INSTALL_LIBRARY_TARGETS_DEFAULT_COMPONENT
+      "${_RULE_DEFAULT_INSTALL_COMPONENT}"
+      PARENT_SCOPE)
+  endif()
+
+  # Tell tablegen to include from here.
+  set(IREE_COMPILER_TABLEGEN_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}" PARENT_SCOPE)
+
+  # Create an implicit defs target that adds this include directory.
+  if(_RULE_IMPLICIT_DEFS_TARGET)
+    add_library(${_RULE_IMPLICIT_DEFS_TARGET} INTERFACE)
+    target_include_directories(${_RULE_IMPLICIT_DEFS_TARGET}
+      INTERFACE
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+    )
+    if(NOT _RULE_IMPLICIT_DEFS_INSTALL_COMPONENT)
+      set(_RULE_IMPLICIT_DEFS_INSTALL_COMPONENT ${_RULE_DEFAULT_INSTALL_COMPONENT})
+    endif()
+    if(NOT _RULE_IMPLICIT_DEFS_EXPORT_SET)
+      set(_RULE_IMPLICIT_DEFS_EXPORT_SET ${_RULE_DEFAULT_EXPORT_SET})
+    endif()
+    iree_install_targets(
+      TARGETS ${_RULE_IMPLICIT_DEFS_TARGET}
+      COMPONENT "${_RULE_IMPLICIT_DEFS_INSTALL_COMPONENT}"
+      EXPORT_SET "${_RULE_IMPLICIT_DEFS_EXPORT_SET}"
+    )
+
+    # Include this target in all cc_libraries.
+    set(IREE_IMPLICIT_DEFS_CC_DEPS ${_RULE_IMPLICIT_DEFS_TARGET} PARENT_SCOPE)
+  endif()
+endfunction()
 
 # Sets ${PACKAGE_NS} to the IREE-root relative package name in C++ namespace
 # format (::).
@@ -260,7 +390,7 @@ function(iree_select_compiler_opts OPTS)
     _IREE_SELECTS
     ""
     ""
-    "ALL;CLANG;CLANG_GTE_10;CLANG_CL;MSVC;GCC;CLANG_OR_GCC;MSVC_OR_CLANG_CL"
+    "ALL;CLANG;CLANG_GTE_10;CLANG_GTE_12;CLANG_CL;MSVC;GCC;GCC_GTE_13;CLANG_OR_GCC;MSVC_OR_CLANG_CL"
   )
   # OPTS is a variable containing the *name* of the variable being populated, so
   # we need to dereference it twice.
@@ -269,6 +399,9 @@ function(iree_select_compiler_opts OPTS)
   if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     list(APPEND _OPTS "${_IREE_SELECTS_GCC}")
     list(APPEND _OPTS "${_IREE_SELECTS_CLANG_OR_GCC}")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+      list(APPEND _OPTS ${_IREE_SELECTS_GCC_GTE_13})
+    endif()
   elseif("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
     if(MSVC)
       list(APPEND _OPTS ${_IREE_SELECTS_CLANG_CL})
@@ -277,6 +410,9 @@ function(iree_select_compiler_opts OPTS)
       list(APPEND _OPTS ${_IREE_SELECTS_CLANG})
       if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 10)
         list(APPEND _OPTS ${_IREE_SELECTS_CLANG_GTE_10})
+      endif()
+      if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12)
+        list(APPEND _OPTS ${_IREE_SELECTS_CLANG_GTE_12})
       endif()
       list(APPEND _OPTS ${_IREE_SELECTS_CLANG_OR_GCC})
     endif()
@@ -335,6 +471,17 @@ function(iree_add_data_dependencies)
       add_dependencies(${_RULE_NAME} ${_DATA_TARGET})
     endif()
   endforeach()
+endfunction()
+
+#-------------------------------------------------------------------------------
+# iree_make_empty_file
+#-------------------------------------------------------------------------------
+
+# Creates an empty file by copying an in-tree empty file. Unlike `file(WRITE)`
+# or `file(TOUCH)`, this does not update the timestamp every time CMake is run,
+# avoiding unnecessary rebuilds when the empty file is used as a rule input.
+function(iree_make_empty_file _FILENAME)
+  configure_file("${PROJECT_SOURCE_DIR}/build_tools/cmake/empty_file" "${_FILENAME}" COPYONLY)
 endfunction()
 
 #-------------------------------------------------------------------------------
@@ -397,6 +544,10 @@ function(iree_link_js_library)
         ${_DUMMY_LIB_NAME}
     )
 
+    iree_install_targets(
+      TARGETS ${_DUMMY_LIB_NAME}
+    )
+
     # Link the js-library to the target.
     # When a linked library starts with a "-" cmake will just add it to the
     # linker command line as it is. The advantage of doing it this way is
@@ -448,6 +599,7 @@ function(iree_symlink_tool)
 
   add_custom_command(
     TARGET "${_TARGET}"
+    POST_BUILD
     BYPRODUCTS
       "${CMAKE_CURRENT_BINARY_DIR}/${_RULE_TO_EXE_NAME}${CMAKE_EXECUTABLE_SUFFIX}"
     COMMAND

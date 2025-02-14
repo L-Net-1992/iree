@@ -25,13 +25,13 @@ dynamic modules should be carefully considered.
 
 ## Instructions
 
-1. Build or install the `iree-compile` binary:
+1. Build or install the `iree-base-compiler` binary:
 
     ```
-    python -m pip install iree-compiler
+    python -m pip install iree-base-compiler
     ```
 
-    [See here](https://openxla.github.io/iree/getting-started/)
+    [See here](https://iree.dev/reference/bindings/python/)
     for general instructions on installing the compiler.
 
 3. Compile the [example module](./test/example.mlir) to a .vmfb file:
@@ -45,7 +45,7 @@ dynamic modules should be carefully considered.
 3. Build the `iree_samples_custom_module_dynamic_module` CMake target :
 
     ```
-    cmake -B ../iree-build/ -DCMAKE_BUILD_TYPE=RelWithDebInfo . \
+    cmake -B ../iree-build/ -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo . \
         -DCMAKE_C_FLAGS=-DIREE_VM_EXECUTION_TRACING_FORCE_ENABLE=1
     cmake --build ../iree-build/ \
         --target iree-run-module \
@@ -53,7 +53,7 @@ dynamic modules should be carefully considered.
     ```
     (here we force runtime execution tracing for demonstration purposes)
 
-    [See here](https://openxla.github.io/iree/building-from-source/getting-started/)
+    [See here](https://iree.dev/building-from-source/getting-started/)
     for general instructions on building using CMake.
 
 4. Run the example program using the main `iree-run-module` tool:

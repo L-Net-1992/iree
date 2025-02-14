@@ -8,7 +8,6 @@
 #define IREE_HAL_LOCAL_EXECUTABLE_LIBRARY_UTIL_H_
 
 #include "iree/base/api.h"
-#include "iree/base/tracing.h"
 #include "iree/hal/api.h"
 #include "iree/hal/local/executable_library.h"
 #include "iree/hal/local/executable_loader.h"
@@ -34,7 +33,45 @@ void iree_hal_executable_library_deinitialize_imports(
     iree_hal_executable_environment_v0_t* environment,
     iree_allocator_t host_allocator);
 
+#if defined(IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK)
+#if !IREE_HAVE_ATTRIBUTE_WEAK
+#error IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK requires toolchain support for weak symbols.
+#endif
+IREE_ATTRIBUTE_WEAK void iree_hal_executable_library_call_hook_begin(
+    iree_string_view_t executable_identifier,
+    const iree_hal_executable_library_v0_t* library, iree_host_size_t ordinal);
+IREE_ATTRIBUTE_WEAK void iree_hal_executable_library_call_hook_end(
+    iree_string_view_t executable_identifier,
+    const iree_hal_executable_library_v0_t* library, iree_host_size_t ordinal);
+#define IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK_BEGIN(executable_identifier, \
+                                                    library, ordinal)      \
+  do {                                                                     \
+    if (iree_hal_executable_library_call_hook_begin /* weak symbol */) {   \
+      iree_hal_executable_library_call_hook_begin(executable_identifier,   \
+                                                  library, ordinal);       \
+    }                                                                      \
+  } while (0)
+#define IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK_END(executable_identifier, \
+                                                  library, ordinal)      \
+  do {                                                                   \
+    if (iree_hal_executable_library_call_hook_end /* weak symbol */) {   \
+      iree_hal_executable_library_call_hook_end(executable_identifier,   \
+                                                library, ordinal);       \
+    }                                                                    \
+  } while (0)
+#else  // defined(IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK)
+#define IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK_BEGIN(executable_identifier, \
+                                                    library, ordinal)
+#define IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK_END(executable_identifier, \
+                                                  library, ordinal)
+#endif  // defined(IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK)
+
 #if IREE_TRACING_FEATURES & IREE_TRACING_FEATURE_INSTRUMENTATION
+
+// Publishes all source files in the library to the tracing provider, if any.
+void iree_hal_executable_library_publish_source_files(
+    const iree_hal_executable_library_v0_t* library);
+
 iree_zone_id_t iree_hal_executable_library_call_zone_begin(
     iree_string_view_t executable_identifier,
     const iree_hal_executable_library_v0_t* library, iree_host_size_t ordinal);
@@ -42,9 +79,16 @@ iree_zone_id_t iree_hal_executable_library_call_zone_begin(
     zone_id, executable_identifier, library, ordinal)                   \
   iree_zone_id_t zone_id = iree_hal_executable_library_call_zone_begin( \
       executable_identifier, library, ordinal)
+
 #else
+
+static inline void iree_hal_executable_library_publish_source_files(
+    const iree_hal_executable_library_v0_t* library) {}
+
 #define IREE_HAL_EXECUTABLE_LIBRARY_CALL_TRACE_ZONE_BEGIN( \
-    zone_id, executable_identifier, library, ordinal)
+    zone_id, executable_identifier, library, ordinal)      \
+  iree_zone_id_t zone_id = 0;                              \
+  (void)zone_id;
 #endif  // IREE_TRACING_FEATURES & IREE_TRACING_FEATURE_INSTRUMENTATION
 
 #endif  // IREE_HAL_LOCAL_EXECUTABLE_LIBRARY_UTIL_H_

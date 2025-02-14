@@ -19,10 +19,12 @@ iree_cc_library(
     "Conversion.cpp"
     "DeduplicateRodata.cpp"
     "DropEmptyModuleInitializers.cpp"
+    "DropUnusedCalls.cpp"
     "GlobalInitialization.cpp"
     "HoistInlinedRodata.cpp"
     "OrdinalAllocation.cpp"
     "Passes.cpp"
+    "ReifyRodataTables.cpp"
     "ResolveRodataLoads.cpp"
     "SinkDefiningOps.cpp"
   DEPS
@@ -33,6 +35,7 @@ iree_cc_library(
     MLIRAffineUtils
     MLIRArithTransforms
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRMathDialect
     MLIRMemRefDialect
@@ -49,6 +52,7 @@ iree_cc_library(
     iree::compiler::Dialect::Util::IR
     iree::compiler::Dialect::Util::Transforms
     iree::compiler::Dialect::VM::Conversion
+    iree::compiler::Dialect::VM::Conversion::ArithToVM
     iree::compiler::Dialect::VM::Conversion::MathToVM
     iree::compiler::Dialect::VM::Conversion::StandardToVM
     iree::compiler::Dialect::VM::Conversion::UtilToVM

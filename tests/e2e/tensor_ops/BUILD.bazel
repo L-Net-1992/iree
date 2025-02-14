@@ -5,7 +5,6 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
-load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 load("//build_tools/bazel:iree_check_test.bzl", "iree_check_single_backend_test_suite")
 
 package(
@@ -13,61 +12,35 @@ package(
     licenses = ["notice"],  # Apache 2.0
 )
 
-iree_lit_test_suite(
-    name = "lit",
-    srcs = [
+ALL_SRCS = enforce_glob(
+    # keep sorted
+    [
+        "collapse_shape.mlir",
+        "concat.mlir",
+        "expand_shape.mlir",
+        "extract_slice.mlir",
+        "pack.mlir",
+        "pack_dynamic_inner_tiles.mlir",
+        "pack_i8.mlir",
         "tensor_cast.mlir",
+        "tensor_insert_slice.mlir",
+        "unpack.mlir",
     ],
-    cfg = "//tests:lit.cfg.py",
-    tags = [
-        "driver=local-task",
-        "driver=vulkan",
-        "hostonly",
-    ],
-    tools = [
-        "//tools:iree-benchmark-module",
-        "//tools:iree-compile",
-        "//tools:iree-run-mlir",
-        "@llvm-project//llvm:FileCheck",
-    ],
+    include = ["*.mlir"],
+    exclude = [],
 )
 
 iree_check_single_backend_test_suite(
     name = "check_llvm-cpu_local-task",
-    srcs = enforce_glob(
-        # keep sorted
-        [
-            "extract_slice.mlir",
-            "pack.mlir",
-            "pack_dynamic_inner_tiles.mlir",
-            "tensor_insert_slice.mlir",
-            "unpack.mlir",
-        ],
-        include = ["*.mlir"],
-        exclude = [
-            "tensor_cast.mlir",
-        ],
-    ),
+    srcs = ALL_SRCS,
+    compiler_flags = ["--iree-llvmcpu-target-cpu=generic"],
     driver = "local-task",
     target_backend = "llvm-cpu",
 )
 
 iree_check_single_backend_test_suite(
     name = "check_vmvx_local-task",
-    srcs = enforce_glob(
-        # keep sorted
-        [
-            "extract_slice.mlir",
-            "pack.mlir",
-            "pack_dynamic_inner_tiles.mlir",
-            "tensor_insert_slice.mlir",
-            "unpack.mlir",
-        ],
-        include = ["*.mlir"],
-        exclude = [
-            "tensor_cast.mlir",
-        ],
-    ),
+    srcs = ALL_SRCS,
     driver = "local-task",
     target_backend = "vmvx",
 )
@@ -87,28 +60,34 @@ iree_check_single_backend_test_suite(
         # results in the creation of temporary buffers between these split
         # linalg.generic ops, causing:
         # > error: failed to legalize operation 'memref.alloca' that was explicitly marked illegal
-        "--iree-vmvx-enable-microkernels-decompose-linalg-generic=false",
+        "--iree-vmvx-enable-ukernels-decompose-linalg-generic=false",
     ],
     driver = "local-task",
     target_backend = "vmvx",
 )
 
+LLVM_GPU_SRCS = enforce_glob(
+    # keep sorted
+    [
+        "collapse_shape.mlir",
+        "concat.mlir",
+        "expand_shape.mlir",
+        "extract_slice.mlir",
+        "pack.mlir",
+        "pack_i8.mlir",
+        "tensor_cast.mlir",
+        "tensor_insert_slice.mlir",
+        "unpack.mlir",
+    ],
+    include = ["*.mlir"],
+    exclude = [
+        "pack_dynamic_inner_tiles.mlir",
+    ],
+)
+
 iree_check_single_backend_test_suite(
     name = "check_cuda",
-    srcs = enforce_glob(
-        # keep sorted
-        [
-            "extract_slice.mlir",
-            "pack.mlir",
-            "tensor_insert_slice.mlir",
-        ],
-        include = ["*.mlir"],
-        exclude = [
-            "pack_dynamic_inner_tiles.mlir",
-            "tensor_cast.mlir",
-            "unpack.mlir",
-        ],
-    ),
+    srcs = LLVM_GPU_SRCS,
     driver = "cuda",
     tags = [
         "noasan",
@@ -121,21 +100,41 @@ iree_check_single_backend_test_suite(
 )
 
 iree_check_single_backend_test_suite(
+    name = "check_rocm_hip",
+    srcs = LLVM_GPU_SRCS,
+    driver = "hip",
+    target_backend = "rocm",
+)
+
+SPIRV_SRCS = enforce_glob(
+    # keep sorted
+    [
+        "collapse_shape.mlir",
+        "concat.mlir",
+        "expand_shape.mlir",
+        "extract_slice.mlir",
+        "tensor_cast.mlir",
+        "tensor_insert_slice.mlir",
+    ],
+    include = ["*.mlir"],
+    exclude = [
+        "pack.mlir",
+        "pack_i8.mlir",
+        "pack_dynamic_inner_tiles.mlir",
+        "unpack.mlir",
+    ],
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_metal-spirv_metal",
+    srcs = SPIRV_SRCS,
+    driver = "metal",
+    target_backend = "metal-spirv",
+)
+
+iree_check_single_backend_test_suite(
     name = "check_vulkan-spirv_vulkan",
-    srcs = enforce_glob(
-        # keep sorted
-        [
-            "extract_slice.mlir",
-            "tensor_insert_slice.mlir",
-        ],
-        include = ["*.mlir"],
-        exclude = [
-            "pack.mlir",
-            "pack_dynamic_inner_tiles.mlir",
-            "tensor_cast.mlir",
-            "unpack.mlir",
-        ],
-    ),
+    srcs = SPIRV_SRCS,
     driver = "vulkan",
     target_backend = "vulkan-spirv",
 )

@@ -28,8 +28,10 @@ iree_cc_library(
     LLVMSupport
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRParser
+    MLIRTransformUtils
     MLIRTransforms
     iree::compiler::Dialect::Util::IR
     iree::compiler::Dialect::VM::IR

@@ -4,14 +4,12 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/Codegen/PassDetail.h"
-#include "iree/compiler/Codegen/Passes.h"
+#include "iree/compiler/Codegen/SPIRV/Passes.h"
 #include "iree/compiler/Codegen/Transforms/Transforms.h"
 #include "iree/compiler/Codegen/Utils/Utils.h"
 #include "iree/compiler/Dialect/HAL/IR/HALTypes.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Affine/Utils.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -20,13 +18,15 @@
 
 #define DEBUG_TYPE "iree-spirv-erase-storage-buffer-static-shape"
 
-namespace mlir {
-namespace iree_compiler {
+namespace mlir::iree_compiler {
+
+#define GEN_PASS_DEF_SPIRVERASESTORAGEBUFFERSTATICSHAPEPASS
+#include "iree/compiler/Codegen/SPIRV/Passes.h.inc"
 
 namespace {
 
 class EraseStorageBufferStaticShapePass final
-    : public SPIRVEraseStorageBufferStaticShapeBase<
+    : public impl::SPIRVEraseStorageBufferStaticShapePassBase<
           EraseStorageBufferStaticShapePass> {
   void runOnOperation() override;
 };
@@ -35,11 +35,13 @@ class EraseStorageBufferStaticShapePass final
 /// buffer.
 bool is1DStaticShapedStorageBuffer(
     IREE::HAL::InterfaceBindingSubspanOp subspanOp) {
-  auto type = subspanOp.getType().dyn_cast<MemRefType>();
-  if (!type) return false;
-  auto attr =
-      type.getMemorySpace().dyn_cast_or_null<IREE::HAL::DescriptorTypeAttr>();
-  if (!attr) return false;
+  auto type = llvm::dyn_cast<MemRefType>(subspanOp.getType());
+  if (!type)
+    return false;
+  auto attr = llvm::dyn_cast_if_present<IREE::HAL::DescriptorTypeAttr>(
+      type.getMemorySpace());
+  if (!attr)
+    return false;
   return type.hasStaticShape() && type.getRank() == 1 &&
          attr.getValue() == IREE::HAL::DescriptorType::StorageBuffer;
 }
@@ -48,18 +50,21 @@ bool is1DStaticShapedStorageBuffer(
 /// e.g.,
 ///
 /// ```mlir
-///  hal.interface.binding.subspan set(0) binding(0) offset(%offset)
+///  hal.interface.binding.subspan layout(#pipeline_layout) binding(0)
+///  offset(%offset)
 ///      : memref<16xf32>
 /// ```
 ///
 /// is re-written to
 ///
 /// ```mlir
-///  hal.interface.binding.subspan set(0) binding(0) offset(%offset)
+///  hal.interface.binding.subspan layout(#pipeline_layout) binding(0)
+///  offset(%offset)
 ///      : memref<?xf32>{%c16}
 /// ```
-IREE::HAL::InterfaceBindingSubspanOp rewriteStorageBufferSubspanOp(
-    RewriterBase &rewriter, IREE::HAL::InterfaceBindingSubspanOp subspanOp) {
+IREE::HAL::InterfaceBindingSubspanOp
+rewriteStorageBufferSubspanOp(RewriterBase &rewriter,
+                              IREE::HAL::InterfaceBindingSubspanOp subspanOp) {
   assert(is1DStaticShapedStorageBuffer(subspanOp));
   LLVM_DEBUG({
     llvm::dbgs() << "Rewriting subspan op: ";
@@ -70,7 +75,7 @@ IREE::HAL::InterfaceBindingSubspanOp rewriteStorageBufferSubspanOp(
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(subspanOp);
 
-  auto oldType = subspanOp.getType().cast<MemRefType>();
+  auto oldType = llvm::cast<MemRefType>(subspanOp.getType());
   auto newType =
       MemRefType::get({ShapedType::kDynamic}, oldType.getElementType(),
                       oldType.getLayout(), oldType.getMemorySpace());
@@ -81,10 +86,9 @@ IREE::HAL::InterfaceBindingSubspanOp rewriteStorageBufferSubspanOp(
       subspanOp.getLoc(), oldType.getNumElements()));
 
   auto newOp = rewriter.create<IREE::HAL::InterfaceBindingSubspanOp>(
-      subspanOp.getLoc(), newType, subspanOp.getSetAttr(),
-      subspanOp.getBindingAttr(), subspanOp.getDescriptorTypeAttr(),
-      subspanOp.getByteOffset(), dynamicDims, subspanOp.getAlignmentAttr(),
-      subspanOp.getDescriptorFlagsAttr());
+      subspanOp.getLoc(), newType, subspanOp.getLayoutAttr(),
+      subspanOp.getBindingAttr(), subspanOp.getByteOffset(), dynamicDims,
+      subspanOp.getAlignmentAttr(), subspanOp.getDescriptorFlagsAttr());
 
   LLVM_DEBUG({
     llvm::dbgs() << "Rewritten to: ";
@@ -94,10 +98,10 @@ IREE::HAL::InterfaceBindingSubspanOp rewriteStorageBufferSubspanOp(
   return newOp;
 }
 
-}  // namespace
+} // namespace
 
 void EraseStorageBufferStaticShapePass::runOnOperation() {
-  func::FuncOp funcOp = getOperation();
+  auto funcOp = getOperation();
 
   // Collect all storage buffer subspan ops with 1-D static shapes. We only need
   // to handle such cases here--high-D static shapes are expected to be flattend
@@ -119,17 +123,10 @@ void EraseStorageBufferStaticShapePass::runOnOperation() {
   {
     RewritePatternSet patterns(&getContext());
     populateRemoveDeadMemAllocPatterns(patterns);
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       return signalPassFailure();
     }
   }
 }
 
-std::unique_ptr<mlir::OperationPass<func::FuncOp>>
-createSPIRVEraseStorageBufferStaticShapePass() {
-  return std::make_unique<EraseStorageBufferStaticShapePass>();
-}
-
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler

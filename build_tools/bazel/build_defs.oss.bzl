@@ -60,13 +60,29 @@ def iree_cmake_extra_content(content = "", inline = False):
     """
     pass
 
+def iree_cc_library(includes = [], system_includes = [], **kwargs):
+    """Base function for all cc_library targets.
+
+    This is a pass-through to the native cc_library, which integrators can
+    customize with additional flags as needed. Prefer to use the compiler
+    and runtime versions instead.
+
+    Note that Bazel does not distinguish between includes and system_includes,
+    but CMake does. So we allow them to be separate and glom them together
+    here.
+    """
+    native.cc_library(
+        includes = includes + system_includes,
+        **kwargs
+    )
+
 def iree_compiler_cc_library(deps = [], **kwargs):
     """Used for cc_library targets within the //compiler tree.
 
     This is a pass-through to the native cc_library which adds specific
     compiler specific options and deps.
     """
-    native.cc_library(
+    iree_cc_library(
         deps = deps + [
             "//compiler/src:defs",
         ],
@@ -112,7 +128,7 @@ def iree_runtime_cc_library(deps = [], **kwargs):
     This is a pass-through to the native cc_library which adds specific
     runtime specific options and deps.
     """
-    native.cc_library(
+    iree_cc_library(
         deps = deps + [
             # TODO: Rename to //runtime/src:defs to match compiler.
             "//runtime/src:runtime_defines",
