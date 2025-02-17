@@ -22,10 +22,12 @@ iree_cc_library(
     MLIRArithDialect
     MLIRControlFlowDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRPass
     MLIRSCFDialect
     MLIRSupport
+    MLIRTransformUtils
     MLIRTransforms
     iree::compiler::Dialect::Util::IR
   PUBLIC

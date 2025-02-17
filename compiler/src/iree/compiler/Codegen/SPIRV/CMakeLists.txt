@@ -10,11 +10,40 @@
 
 iree_add_all_subdirs()
 
+iree_tablegen_library(
+  NAME
+    PassesIncGen
+  TD_FILE
+    "Passes.td"
+  OUTS
+    --gen-pass-decls Passes.h.inc
+)
+
+iree_cc_library(
+  NAME
+    PassHeaders
+  HDRS
+    "Passes.h"
+    "Passes.h.inc"
+  DEPS
+    ::PassesIncGen
+    MLIRLinalgTransforms
+    MLIRMemRefDialect
+    MLIRPass
+    MLIRTransformUtils
+    MLIRTransforms
+    iree::compiler::Codegen::Dialect::Codegen::IR::IREECodegenDialect
+    iree::compiler::Dialect::HAL::IR
+    iree::compiler::Utils
+  PUBLIC
+)
+
 iree_cc_library(
   NAME
     SPIRV
   HDRS
     "KernelConfig.h"
+    "Passes.h"
     "Utils.h"
   SRCS
     "AMDConfig.cpp"
@@ -27,26 +56,28 @@ iree_cc_library(
     "Passes.cpp"
     "SPIRVAnnotateWinogradLoops.cpp"
     "SPIRVBreakDownLargeVector.cpp"
-    "SPIRVCreateFastSlowPath.cpp"
-    "SPIRVDistribute.cpp"
-    "SPIRVEmulateBf16.cpp"
+    "SPIRVConvertGPUTarget.cpp"
     "SPIRVEmulateI64.cpp"
     "SPIRVEraseStorageBufferStaticShape.cpp"
+    "SPIRVFinalVectorLowering.cpp"
+    "SPIRVInitialVectorLowering.cpp"
+    "SPIRVLinkExecutables.cpp"
     "SPIRVLowerExecutableTargetPass.cpp"
+    "SPIRVLowerExecutableUsingTransformDialect.cpp"
     "SPIRVMapMemRefStorageClass.cpp"
-    "SPIRVTile.cpp"
+    "SPIRVMaterializeExecutableConditions.cpp"
+    "SPIRVSelectLoweringStrategy.cpp"
     "SPIRVTileAndDistribute.cpp"
     "SPIRVTileAndPromote.cpp"
     "SPIRVTileAndVectorizeToCooperativeOps.cpp"
+    "SPIRVTrimExecutableTargetEnv.cpp"
     "SPIRVVectorToGPUSubgroupMMAOps.cpp"
-    "SPIRVVectorize.cpp"
     "SPIRVVectorizeLoadStore.cpp"
     "Utils.cpp"
     "Verifiers.cpp"
   DEPS
-    IREELinalgExtDialect
-    IREELinalgExtPasses
-    IREELinalgExtTransforms
+    ::PassHeaders
+    ::PassesIncGen
     IREELinalgTransformDialect
     IREELinalgTransformDialectPasses
     LLVMSupport
@@ -66,7 +97,8 @@ iree_cc_library(
     MLIRFuncDialect
     MLIRFuncToSPIRV
     MLIRFuncTransforms
-    MLIRGPUOps
+    MLIRFunctionInterfaces
+    MLIRGPUDialect
     MLIRGPUToSPIRV
     MLIRGPUTransforms
     MLIRIR
@@ -95,22 +127,32 @@ iree_cc_library(
     MLIRTosaDialect
     MLIRTosaToArith
     MLIRTransformDialect
+    MLIRTransformUtils
     MLIRTransforms
+    MLIRUBDialect
+    MLIRUBToSPIRV
     MLIRVectorDialect
     MLIRVectorInterfaces
     MLIRVectorToGPU
     MLIRVectorToSPIRV
     MLIRVectorTransforms
     iree::compiler::Codegen::Common
-    iree::compiler::Codegen::Dialect::IREECodegenDialect
-    iree::compiler::Codegen::PassHeaders
+    iree::compiler::Codegen::Common::GPU::CommonGPUPasses
+    iree::compiler::Codegen::Common::GPU::GPUHeuristics
+    iree::compiler::Codegen::Common::TransformDialectInterpreterPass
+    iree::compiler::Codegen::Dialect::Codegen::IR::IREECodegenDialect
+    iree::compiler::Codegen::Dialect::GPU::IR::IREEGPUDialect
+    iree::compiler::Codegen::Interfaces::PartitionableLoopsInterface
     iree::compiler::Codegen::Transforms
     iree::compiler::Codegen::Utils
     iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::HAL::IR
     iree::compiler::Dialect::HAL::IR::HALDialect
+    iree::compiler::Dialect::LinalgExt::IR
+    iree::compiler::Dialect::LinalgExt::Transforms
     iree::compiler::Dialect::Util::IR
     iree::compiler::Dialect::Util::Transforms
+    iree::compiler::Utils
   PUBLIC
 )
 

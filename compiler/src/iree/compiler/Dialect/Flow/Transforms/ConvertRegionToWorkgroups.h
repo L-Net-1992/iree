@@ -7,7 +7,6 @@
 #ifndef IREE_COMPILER_DIALECT_FLOW_TRANSFORMS_CONVERTREGIONTOWORKGROUPS_H_
 #define IREE_COMPILER_DIALECT_FLOW_TRANSFORMS_CONVERTREGIONTOWORKGROUPS_H_
 
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
@@ -17,10 +16,10 @@ class BlockArgument;
 class Location;
 class OpBuilder;
 class RewriterBase;
+} // namespace mlir
 
-namespace iree_compiler {
-namespace IREE {
-namespace Flow {
+namespace mlir::iree_compiler::IREE::Flow {
+
 class DispatchRegionOp;
 class DispatchWorkgroupsOp;
 
@@ -45,9 +44,6 @@ FailureOr<DispatchWorkgroupsOp>
 rewriteFlowDispatchRegionToFlowDispatchWorkgroups(DispatchRegionOp regionOp,
                                                   RewriterBase &rewriter);
 
-}  // namespace Flow
-}  // namespace IREE
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler::IREE::Flow
 
-#endif  // IREE_COMPILER_DIALECT_FLOW_TRANSFORMS_CONVERTREGIONTOWORKGROUPS_H_
+#endif // IREE_COMPILER_DIALECT_FLOW_TRANSFORMS_CONVERTREGIONTOWORKGROUPS_H_

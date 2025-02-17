@@ -16,19 +16,19 @@ iree_cc_library(
   HDRS
     "Patterns.h"
   SRCS
-    "ConvertConstantOps.cpp"
-    "ConvertStructuralOps.cpp"
     "Patterns.cpp"
   DEPS
     LLVMSupport
     MLIRArithDialect
     MLIRControlFlowDialect
-    MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRMemRefDialect
     MLIRPass
+    MLIRSCFDialect
     MLIRShapeDialect
     MLIRTensorDialect
+    MLIRTransformUtils
     MLIRTransforms
     iree::compiler::Dialect::Stream::Conversion
     iree::compiler::Dialect::Stream::IR

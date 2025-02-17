@@ -38,7 +38,6 @@ iree_runtime_cc_library(
     deps = [
         ":vm",
         "//runtime/src/iree/base",
-        "//runtime/src/iree/base:core_headers",
         "//runtime/src/iree/base/internal:span",
     ],
 )
@@ -79,8 +78,6 @@ iree_runtime_cc_library(
     ],
     deps = [
         "//runtime/src/iree/base",
-        "//runtime/src/iree/base:core_headers",
-        "//runtime/src/iree/base:tracing",
         "//runtime/src/iree/base/internal",
         "//runtime/src/iree/base/internal:synchronization",
     ],
@@ -141,8 +138,8 @@ cc_binary_benchmark(
         ":impl",
         ":native_module_test_hdrs",
         "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:benchmark",
         "//runtime/src/iree/testing:benchmark_main",
-        "@com_google_benchmark//:benchmark",
     ],
 )
 

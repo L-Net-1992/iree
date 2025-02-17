@@ -10,20 +10,20 @@
 #include "iree/compiler/Dialect/VM/IR/VMOps.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 
 #define DEBUG_TYPE "iree-vm"
 
-namespace mlir {
-namespace iree_compiler {
-namespace IREE {
-namespace VM {
+namespace mlir::iree_compiler::IREE::VM {
 
 TypeConverter::TypeConverter(TargetOptions targetOptions)
     : targetOptions_(targetOptions) {
-  // Variant means opaque in VM.
+  addConversion([](IREE::Util::ObjectType type) {
+    // Objects are always opaque ref types.
+    return IREE::VM::RefType::get(IREE::VM::OpaqueType::get(type.getContext()));
+  });
   addConversion([](IREE::Util::VariantType type) {
+    // Variant means opaque in VM.
     return IREE::VM::OpaqueType::get(type.getContext());
   });
 
@@ -32,8 +32,8 @@ TypeConverter::TypeConverter(TargetOptions targetOptions)
 
   // Wrap ref types.
   addConversion([](Type type) -> std::optional<Type> {
-    if (RefType::isCompatible(type)) {
-      return RefType::get(type);
+    if (IREE::VM::RefType::isCompatible(type)) {
+      return IREE::VM::RefType::get(type);
     }
     return std::nullopt;
   });
@@ -66,7 +66,7 @@ TypeConverter::TypeConverter(TargetOptions targetOptions)
     if (floatType.getIntOrFloatBitWidth() < 32) {
       if (targetOptions_.f32Extension) {
         // Promote f16 -> f32.
-        return FloatType::getF32(floatType.getContext());
+        return Float32Type::get(floatType.getContext());
       } else {
         // f32 is not supported; can't compile.
         return std::nullopt;
@@ -86,7 +86,7 @@ TypeConverter::TypeConverter(TargetOptions targetOptions)
                  targetOptions_.truncateUnsupportedFloats) {
         // f64 is not supported and we still want to compile, so truncate to
         // f32 (unsafe if all bits are actually required!).
-        return FloatType::getF32(floatType.getContext());
+        return Float32Type::get(floatType.getContext());
       }
     }
     return std::nullopt;
@@ -105,7 +105,8 @@ TypeConverter::TypeConverter(TargetOptions targetOptions)
 
   addSourceMaterialization([](OpBuilder &builder, IndexType type,
                               ValueRange inputs, Location loc) -> Value {
-    if (inputs.size() != 1 || !inputs.front().getType().isa<IntegerType>()) {
+    if (inputs.size() != 1 ||
+        !llvm::isa<IntegerType>(inputs.front().getType())) {
       return nullptr;
     }
     return builder.create<arith::IndexCastOp>(loc, type, inputs.front());
@@ -116,7 +117,4 @@ TypeConverter::TypeConverter(TargetOptions targetOptions)
          Location loc) -> Value { return inputs.front(); });
 }
 
-}  // namespace VM
-}  // namespace IREE
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler::IREE::VM

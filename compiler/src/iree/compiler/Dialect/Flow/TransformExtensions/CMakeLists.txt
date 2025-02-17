@@ -33,12 +33,15 @@ iree_cc_library(
     ::FlowExtensionsOpGen
     IREEDialectsTransforms
     IREELinalgTransformDialect
+    MLIRAnalysis
     MLIRArithDialect
+    MLIRBytecodeOpInterface
     MLIRIR
     MLIRPDLDialect
     MLIRSCFDialect
     MLIRTensorDialect
     MLIRTransformDialect
+    MLIRTransformDialectInterfaces
     MLIRTransformUtils
     iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::Flow::Transforms

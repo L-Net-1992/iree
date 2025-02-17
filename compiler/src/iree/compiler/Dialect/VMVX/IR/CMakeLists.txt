@@ -32,11 +32,13 @@ iree_cc_library(
     ::VMVXOpsGen
     LLVMSupport
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRSideEffectInterfaces
     MLIRSupport
     MLIRTransformUtils
     MLIRTranslateLib
+    iree::compiler::Dialect::HAL::IR
     iree::compiler::Dialect::Util::IR
     iree::compiler::Dialect::VM::IR
   PUBLIC
@@ -53,6 +55,7 @@ iree_cc_library(
     ::IR
     LLVMSupport
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRParser
     MLIRSupport

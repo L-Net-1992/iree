@@ -22,8 +22,8 @@ iree_cc_library(
   DEPS
     iree::base
     iree::base::internal::cpu
-    iree::base::tracing
     iree::hal
+    iree::modules::hal::debugging
     iree::modules::hal::types
     iree::modules::hal::utils::buffer_diagnostics
     iree::vm

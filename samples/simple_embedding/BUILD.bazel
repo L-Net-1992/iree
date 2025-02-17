@@ -64,8 +64,19 @@ endif()
 
 iree_cmake_extra_content(
     content = """
-if(IREE_HAL_DRIVER_LOCAL_SYNC AND IREE_HAL_EXECUTABLE_LOADER_EMBEDDED_ELF AND
-   (IREE_TARGET_BACKEND_LLVM_CPU OR IREE_HOST_BIN_DIR))
+iree_compiler_targeting_iree_arch(_IREE_COMPILER_TARGETING_ARM_32 "arm_32")
+iree_compiler_targeting_iree_arch(_IREE_COMPILER_TARGETING_ARM_64 "arm_64")
+iree_compiler_targeting_iree_arch(_IREE_COMPILER_TARGETING_RISCV_32 "riscv_32")
+iree_compiler_targeting_iree_arch(_IREE_COMPILER_TARGETING_RISCV_64 "riscv_64")
+iree_compiler_targeting_iree_arch(_IREE_COMPILER_TARGETING_X86_64 "x86_64")
+if(IREE_HAL_DRIVER_LOCAL_SYNC AND
+   IREE_HAL_EXECUTABLE_LOADER_EMBEDDED_ELF AND
+   ((IREE_TARGET_BACKEND_LLVM_CPU AND
+    _IREE_COMPILER_TARGETING_ARM_32 AND
+    _IREE_COMPILER_TARGETING_ARM_64 AND
+    _IREE_COMPILER_TARGETING_RISCV_32 AND
+    _IREE_COMPILER_TARGETING_RISCV_64 AND
+    _IREE_COMPILER_TARGETING_X86_64) OR IREE_HOST_BIN_DIR))
 """,
     inline = True,
 )
@@ -100,6 +111,7 @@ iree_bytecode_module(
     flags = [
         "--iree-hal-target-backends=llvm-cpu",
         "--iree-llvmcpu-target-triple=x86_64-pc-linux-elf",
+        "--iree-llvmcpu-target-cpu=generic",
         "--iree-llvmcpu-debug-symbols=false",
         "--iree-vm-bytecode-module-strip-source-map=true",
         "--iree-vm-emit-polyglot-zip=false",
@@ -113,7 +125,6 @@ iree_bytecode_module(
     flags = [
         "--iree-hal-target-backends=llvm-cpu",
         "--iree-llvmcpu-target-triple=riscv32-pc-linux-elf",
-        "--iree-llvmcpu-target-cpu=generic-rv32",
         "--iree-llvmcpu-target-cpu-features=+m,+f",
         "--iree-llvmcpu-target-abi=ilp32",
         "--iree-llvmcpu-debug-symbols=false",
@@ -129,7 +140,6 @@ iree_bytecode_module(
     flags = [
         "--iree-hal-target-backends=llvm-cpu",
         "--iree-llvmcpu-target-triple=riscv64-pc-linux-elf",
-        "--iree-llvmcpu-target-cpu=generic-rv64",
         "--iree-llvmcpu-target-cpu-features=+m,+a,+f,+d,+c",
         "--iree-llvmcpu-target-abi=lp64d",
         "--iree-llvmcpu-debug-symbols=false",
@@ -145,6 +155,7 @@ iree_bytecode_module(
     flags = [
         "--iree-hal-target-backends=llvm-cpu",
         "--iree-llvmcpu-target-triple=armv7a-pc-linux-elf",
+        "--iree-llvmcpu-target-cpu=generic",
         "--iree-llvmcpu-target-float-abi=hard",
         "--iree-llvmcpu-debug-symbols=false",
         "--iree-vm-bytecode-module-strip-source-map=true",
@@ -159,6 +170,7 @@ iree_bytecode_module(
     flags = [
         "--iree-hal-target-backends=llvm-cpu",
         "--iree-llvmcpu-target-triple=aarch64-pc-linux-elf",
+        "--iree-llvmcpu-target-cpu=generic",
         "--iree-llvmcpu-debug-symbols=false",
         "--iree-vm-bytecode-module-strip-source-map=true",
         "--iree-vm-emit-polyglot-zip=false",

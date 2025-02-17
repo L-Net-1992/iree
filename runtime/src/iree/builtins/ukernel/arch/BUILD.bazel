@@ -5,7 +5,6 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 load("//build_tools/bazel:build_defs.oss.bzl", "iree_runtime_cc_library")
-load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -13,19 +12,11 @@ package(
     licenses = ["notice"],  # Apache 2.0
 )
 
-copy_file(
-    name = "gen_config",
-    src = "config.h.bazel-generic",
-    out = "config.h",
-)
-
-iree_runtime_cc_library(
-    name = "config",
-    hdrs = ["config.h"],
-)
-
 # In the CMake build, this library provides the arch-dependent symbols.
-# Not yet implemented on Bazel.
+# For now in Bazel, this just unconditionally uses the fallback to generic code.
 iree_runtime_cc_library(
     name = "ukernel_arch",
+    deps = [
+        "//runtime/src/iree/builtins/ukernel:fallback",
+    ],
 )

@@ -21,12 +21,15 @@ iree_compiler_cc_library(
         "Patterns.h",
     ],
     deps = [
+        "//compiler/src/iree/compiler/Dialect/Encoding/IR",
         "//compiler/src/iree/compiler/Dialect/HAL/IR",
         "//compiler/src/iree/compiler/Dialect/Stream/Conversion",
         "//compiler/src/iree/compiler/Dialect/Stream/IR",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
     ],
 )

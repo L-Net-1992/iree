@@ -21,35 +21,6 @@ iree_cc_library(
     ::caching_allocator
     ::debug_allocator
     iree::base
-    iree::base::tracing
-    iree::hal
-  PUBLIC
-)
-
-iree_cc_library(
-  NAME
-    buffer_transfer
-  HDRS
-    "buffer_transfer.h"
-  SRCS
-    "buffer_transfer.c"
-  DEPS
-    iree::base
-    iree::base::tracing
-    iree::hal
-  PUBLIC
-)
-
-iree_cc_library(
-  NAME
-    debug_allocator
-  HDRS
-    "debug_allocator.h"
-  SRCS
-    "debug_allocator.c"
-  DEPS
-    iree::base
-    iree::base::tracing
     iree::hal
   PUBLIC
 )
@@ -65,7 +36,6 @@ iree_cc_library(
     ::resource_set
     iree::base
     iree::base::internal::arena
-    iree::base::tracing
     iree::hal
   PUBLIC
 )
@@ -80,7 +50,19 @@ iree_cc_library(
   DEPS
     iree::base
     iree::base::internal::synchronization
-    iree::base::tracing
+    iree::hal
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    debug_allocator
+  HDRS
+    "debug_allocator.h"
+  SRCS
+    "debug_allocator.c"
+  DEPS
+    iree::base
     iree::hal
   PUBLIC
 )
@@ -96,8 +78,69 @@ iree_cc_library(
     ::resource_set
     iree::base
     iree::base::internal::arena
-    iree::base::tracing
     iree::hal
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    executable_debug_info
+  HDRS
+    "executable_debug_info.h"
+  SRCS
+    "executable_debug_info.c"
+  DEPS
+    iree::base
+    iree::base::internal::flatcc::parsing
+    iree::schemas::executable_debug_info_c_fbs
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    file_cache
+  HDRS
+    "file_cache.h"
+  SRCS
+    "file_cache.c"
+  DEPS
+    iree::base
+    iree::base::internal
+    iree::base::internal::synchronization
+    iree::hal
+    iree::io::file_handle
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    file_transfer
+  HDRS
+    "file_transfer.h"
+  SRCS
+    "file_transfer.c"
+  DEPS
+    iree::base
+    iree::base::internal
+    iree::hal
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    files
+  HDRS
+    "fd_file.h"
+    "file_registry.h"
+    "memory_file.h"
+  SRCS
+    "fd_file.c"
+    "file_registry.c"
+    "memory_file.c"
+  DEPS
+    iree::base
+    iree::hal
+    iree::io::file_handle
   PUBLIC
 )
 
@@ -112,7 +155,6 @@ iree_cc_library(
   DEPS
     iree::base
     iree::base::internal::dynamic_library
-    iree::base::tracing
     iree::hal
   PUBLIC
 )
@@ -139,7 +181,6 @@ iree_cc_library(
   DEPS
     ::libmpi
     iree::base
-    iree::base::tracing
     iree::hal
   PUBLIC
 )
@@ -153,8 +194,8 @@ iree_cc_library(
     "resource_set.c"
   DEPS
     iree::base
+    iree::base::internal
     iree::base::internal::arena
-    iree::base::tracing
     iree::hal
   PUBLIC
 )
@@ -196,7 +237,6 @@ iree_cc_library(
   DEPS
     iree::base
     iree::base::internal::synchronization
-    iree::base::tracing
     iree::hal
   PUBLIC
 )
@@ -213,6 +253,44 @@ iree_cc_test(
     iree::hal
     iree::testing::gtest
     iree::testing::gtest_main
+)
+
+iree_cc_library(
+  NAME
+    stream_tracing
+  HDRS
+    "stream_tracing.h"
+  SRCS
+    "stream_tracing.c"
+  DEPS
+    iree::base
+    iree::base::internal::arena
+    iree::base::internal::synchronization
+    iree::hal
+  PUBLIC
+)
+
+if(NOT IREE_ENABLE_THREADING)
+  return()
+endif()
+
+iree_cc_library(
+  NAME
+    deferred_work_queue
+  HDRS
+    "deferred_work_queue.h"
+  SRCS
+    "deferred_work_queue.c"
+  DEPS
+    ::deferred_command_buffer
+    ::resource_set
+    ::semaphore_base
+    iree::base
+    iree::base::internal::arena
+    iree::base::internal::synchronization
+    iree::base::internal::threading
+    iree::hal
+  PUBLIC
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

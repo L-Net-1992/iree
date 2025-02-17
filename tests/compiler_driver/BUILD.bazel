@@ -6,8 +6,8 @@
 
 # Tests for common transforms.
 
-load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
+load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 
 package(
     features = ["layering_check"],
@@ -22,6 +22,7 @@ iree_lit_test_suite(
             "hal_executable.mlir",
             "inline_dynamic_hal_executable.mlir",
             "inline_static_hal_executable.mlir",
+            "precompile.mlir",
             "preprocessing_flags.mlir",
             "smoketest.mlir",
             "streams.mlir",
@@ -29,6 +30,7 @@ iree_lit_test_suite(
         include = ["*.mlir"],
     ),
     cfg = "//tests:lit.cfg.py",
+    tags = ["hostonly"],
     tools = [
         "//tools:iree-compile",
         "@llvm-project//llvm:FileCheck",

@@ -20,13 +20,14 @@ iree_cc_library(
   DEPS
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRPass
+    MLIRTransformUtils
     MLIRTransforms
     iree::compiler::Dialect::HAL::Conversion::HALToVM
     iree::compiler::Dialect::Util::IR
     iree::compiler::Dialect::VM::Conversion
-    iree::compiler::Dialect::VM::Conversion::StandardToVM
     iree::compiler::Dialect::VM::IR
     iree::compiler::Modules::HAL::Loader::IR
   PUBLIC

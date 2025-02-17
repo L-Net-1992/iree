@@ -28,8 +28,6 @@ iree_runtime_cc_library(
     ],
     deps = [
         "//runtime/src/iree/base",
-        "//runtime/src/iree/base:core_headers",
-        "//runtime/src/iree/base:tracing",
         "//runtime/src/iree/base/internal",
         "//runtime/src/iree/base/internal:arena",
         "//runtime/src/iree/base/internal:cpu",
@@ -37,8 +35,9 @@ iree_runtime_cc_library(
         "//runtime/src/iree/hal",
         "//runtime/src/iree/hal/local",
         "//runtime/src/iree/hal/local:executable_environment",
-        "//runtime/src/iree/hal/utils:buffer_transfer",
         "//runtime/src/iree/hal/utils:deferred_command_buffer",
+        "//runtime/src/iree/hal/utils:file_transfer",
+        "//runtime/src/iree/hal/utils:files",
         "//runtime/src/iree/hal/utils:semaphore_base",
     ],
 )

@@ -23,10 +23,10 @@ iree_cc_library(
     LLVMSupport
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
-    MLIRLinalgDialect
+    MLIRSideEffectInterfaces
     MLIRSupport
-    MLIRTensorDialect
     iree::compiler::Dialect::Util::Analysis
     iree::compiler::Dialect::Util::IR
   PUBLIC

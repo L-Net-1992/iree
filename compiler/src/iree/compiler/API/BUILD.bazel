@@ -20,33 +20,31 @@ exports_files([
     "api_exports.lst",
 ])
 
-# All headers for APIs exported by the library.
-iree_compiler_cc_library(
-    name = "MLIRInteropHeaders",
-    hdrs = [
-        "MLIRInterop.h",
-    ],
-    deps = [
-        "//compiler/bindings/c:headers",
-        "@llvm-project//mlir:CAPIIRHeaders",
-    ],
-)
-
+# IMPORTANT: If modifying the list of dependencies, mirror the changes
+# manually into:
+#   1. CMakeLists.txt _EXPORT_OBJECT_LIBS
+#   2. TODO: Something for bazel.
+# The CI will complain if you get it wrong.
 iree_compiler_cc_library(
     name = "StaticImpl",
     deps = [
-        "//compiler/src/iree/compiler/API/Internal:Embed",
+        "//compiler/src/iree/compiler/API/Internal:CompilerDriver",
         "//compiler/src/iree/compiler/API/Internal:IREECompileToolEntryPoint",
         "//compiler/src/iree/compiler/API/Internal:IREEMLIRLSPServerToolEntryPoint",
         "//compiler/src/iree/compiler/API/Internal:IREEOptToolEntryPoint",
+        "//compiler/src/iree/compiler/API/Internal:IREEReduceToolEntryPoint",
         "//compiler/src/iree/compiler/API/Internal:LLDToolEntryPoint",
         "//llvm-external-projects/iree-dialects:CAPI",
         "@llvm-project//mlir:CAPIDebug",
+        "@llvm-project//mlir:CAPIGPU",
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:CAPIInterfaces",
+        "@llvm-project//mlir:CAPILLVM",
         "@llvm-project//mlir:CAPILinalg",
         "@llvm-project//mlir:CAPIPDL",
         "@llvm-project//mlir:CAPITransformDialect",
+        "@llvm-project//mlir:CAPITransformDialectTransforms",
+        "@llvm-project//mlir:CAPITransforms",
     ],
 )
 

@@ -1,6 +1,10 @@
+---
+icon: octicons/bookmark-16
+---
+
 # Getting started
 
-## Prerequisites
+## :octicons-download-16: Prerequisites
 
 IREE can be built from source using [CMake](https://cmake.org/). We also
 recommend the [Ninja](https://ninja-build.org/) CMake generator and the
@@ -11,7 +15,7 @@ recommend the [Ninja](https://ninja-build.org/) CMake generator and the
     configurations (including the Makefile generator and gcc) are "best effort".
     Patches to improve support are always welcome.
 
-=== "Linux"
+=== ":fontawesome-brands-linux: Linux"
 
     1. Install a compiler/linker (typically "clang" and "lld" package)
 
@@ -26,7 +30,7 @@ recommend the [Ninja](https://ninja-build.org/) CMake generator and the
     sudo apt install cmake ninja-build clang lld
     ```
 
-=== "macOS"
+=== ":fontawesome-brands-apple: macOS"
 
     1. Install [CMake](https://cmake.org/download/)
 
@@ -38,7 +42,7 @@ recommend the [Ninja](https://ninja-build.org/) CMake generator and the
     brew install cmake ninja
     ```
 
-=== "Windows"
+=== ":fontawesome-brands-windows: Windows"
 
     1. Install MSVC from Visual Studio or "Tools for Visual Studio" on the
        [official downloads page](https://visualstudio.microsoft.com/downloads/)
@@ -56,13 +60,13 @@ recommend the [Ninja](https://ninja-build.org/) CMake generator and the
 
 <!-- TODO(#12921): add notes about Docker and/or dev containers  -->
 
-## Quickstart: clone and build
+## :octicons-rocket-16: Quickstart: clone and build
 
 Use [Git](https://git-scm.com/) to clone the IREE repository and initialize its
 submodules:
 
 ``` shell
-git clone https://github.com/openxla/iree.git
+git clone https://github.com/iree-org/iree.git
 cd iree
 git submodule update --init
 ```
@@ -85,14 +89,14 @@ cmake --build ../iree-build/
     Use case permitting, disabling the compiler build with
     `-DIREE_BUILD_COMPILER=OFF` will drastically simplify the build.
 
-## Configuration settings
+## :octicons-sliders-16: Configuration settings
 
 The configure step should be customized for your build environment. These
 settings can improve compile and link times substantially.
 
 <!-- TODO(#5804): add notes about CMake presets?  -->
 
-=== "Linux"
+=== ":fontawesome-brands-linux: Linux"
 
     ``` shell
     # Recommended development options using clang and lld:
@@ -106,7 +110,7 @@ settings can improve compile and link times substantially.
         -DIREE_ENABLE_LLD=ON
     ```
 
-=== "macOS"
+=== ":fontawesome-brands-apple: macOS"
 
     ``` shell
     # Recommended development options using clang and lld:
@@ -114,13 +118,16 @@ settings can improve compile and link times substantially.
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DIREE_ENABLE_ASSERTIONS=ON \
         -DIREE_ENABLE_SPLIT_DWARF=ON \
-        -DIREE_ENABLE_THIN_ARCHIVES=ON \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
         -DIREE_ENABLE_LLD=ON
     ```
 
-=== "Windows"
+    It is also possible to add `-DIREE_ENABLE_THIN_ARCHIVES=ON` if the
+    `CMAKE_AR` variable is defined and points to the path of either the GNU
+    binutils or LLVM `ar` program, overriding the default Apple `ar`.
+
+=== ":fontawesome-brands-windows: Windows"
 
     ``` shell
     # Recommended development options:
@@ -146,35 +153,77 @@ settings can improve compile and link times substantially.
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
     ```
 
-    See also our [developer documentation for ccache](https://github.com/openxla/iree/blob/main/docs/developers/developing_iree/ccache.md).
+    See also our [developer documentation for ccache](../developers/building/cmake-with-ccache.md).
 
-### Optional components
+### :octicons-gear-16: Optional components
+
+Enabled components and other configurations can be changed via
+[CMake options](../developers/building/cmake-options.md), listed in the root
+[`CMakeLists.txt`](https://github.com/iree-org/iree/blob/main/CMakeLists.txt).
+We also maintain a few
+[CMake presets](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html)
+at
+[`build_tools/cmake/presets`](https://github.com/iree-org/iree/tree/main/build_tools/cmake/presets)
+for common configurations.
 
 By default, the CMake build includes:
 
-* All compiler targets (`llvm-cpu`, `cuda`, `vulkan-spirv`, etc.)
-* All runtime HAL drivers (`local-task`, `cuda`, `vulkan`, etc.)
-* All compiler input formats (StableHLO, TOSA, etc.)
+* All small to medium size [compiler targets](../developers/building/cmake-options.md#iree_target_backend_)
+  (`llvm-cpu`, `vulkan-spirv`, etc.)
+* All [runtime HAL drivers](../developers/building/cmake-options.md#iree_hal_driver_)
+  (`local-task`, `cuda`, `vulkan`, etc.)
+* All [compiler input formats](../developers/building/cmake-options.md#iree_input_)
+  (PyTorch, StableHLO, TOSA, etc.)
 * All compiler output formats (VM bytecode, C)
 
 The default build does _not_ include:
 
-* Compiler or runtime bindings (Python, TFLite, etc.)
+* CUDA and ROCM/HIP targets
+* Python and other language bindings for the compiler or runtime
 * Advanced features like AddressSanitizer or tracing instrumentation
 * Experimental components
 
-These can be changed via the `IREE_` CMake options listed in the root
-[`CMakeLists.txt`](https://github.com/openxla/iree/blob/main/CMakeLists.txt).
+!!! example "Configuration examples"
 
-### Extensions and project integrations
+    === "Disable all backends except CPU"
+
+        This configure command will
+
+        * Disable all compiler target backends then enable just `llvm-cpu`
+        * Disable all runtime HAL drivers then enable just the CPU "local" runtime
+          HAL drivers
+
+        ``` shell
+        cmake -G Ninja -B ../iree-build/ -S . \
+            -DIREE_TARGET_BACKEND_DEFAULTS=OFF \
+            -DIREE_TARGET_BACKEND_LLVM_CPU=ON \
+            -DIREE_HAL_DRIVER_DEFAULTS=OFF \
+            -DIREE_HAL_DRIVER_LOCAL_SYNC=ON \
+            -DIREE_HAL_DRIVER_LOCAL_TASK=ON
+        ```
+
+    === "Enable CUDA"
+
+        This configure command will
+
+        * Enable the CUDA compiler target backend
+        * Enable the CUDA runtime HAL driver
+
+        ``` shell
+        cmake -G Ninja -B ../iree-build/ -S . \
+            -DIREE_TARGET_BACKEND_CUDA=ON \
+            -DIREE_HAL_DRIVER_CUDA=ON
+        ```
+
+### Extensions and integrations
 
 When using IREE within other projects, you can register compiler plugins and
 runtime HAL drivers. You can also bring your own copy of LLVM and some other
 tools. See the root
-[`CMakeLists.txt`](https://github.com/openxla/iree/blob/main/CMakeLists.txt)
+[`CMakeLists.txt`](https://github.com/iree-org/iree/blob/main/CMakeLists.txt)
 for details.
 
-## Tests and samples
+## :octicons-code-16: Tests and samples
 
 ### Running tests
 
@@ -213,17 +262,17 @@ cmake --build ../iree-build --target iree-run-tests
 ```
 
 To run only certain tests, we have a
-[helper script](https://github.com/openxla/iree/blob/main/build_tools/cmake/ctest_all.sh)
+[helper script](https://github.com/iree-org/iree/blob/main/build_tools/cmake/ctest_all.sh)
 that converts environment variables into ctest filters:
 
 ``` shell
 # Run default tests
-./build_tools/cmake/ctest_all.sh
+./build_tools/cmake/ctest_all.sh ../iree-build
 
 # Run tests, turning CUDA on and Vulkan off
 export IREE_CUDA_DISABLE=0
 export IREE_VULKAN_DISABLE=1
-./build_tools/cmake/ctest_all.sh
+./build_tools/cmake/ctest_all.sh ../iree-build
 ```
 
 ### Running samples
@@ -244,4 +293,195 @@ cmake --build ../iree-build/
 ls ../iree-build/tools/
 ../iree-build/tools/iree-compile --help
 ../iree-build/tools/iree-run-module --help
+```
+
+## :simple-python: Python bindings
+
+Python packages can either be built from source or installed from our releases.
+See the [Python bindings](../reference/bindings/python.md) page for details
+about the bindings themselves.
+
+### Dependencies
+
+You will need a recent Python installation >=3.9 (we aim to support
+[non-eol Python versions](https://endoflife.date/python)).
+
+???+ Tip "Tip - Managing Python versions"
+    Make sure your 'python' is what you expect:
+
+    === ":fontawesome-brands-linux: Linux"
+
+        Note that on multi-python systems, this may have a version suffix, and on
+        many Linuxes where python2 and python3 can co-exist, you may also want to
+        use `python3`.
+
+        ``` shell
+        which python
+        python --version
+        ```
+
+    === ":fontawesome-brands-apple: macOS"
+
+        Note that on multi-python systems, this may have a version suffix, and on
+        macOS where python2 and python3 can co-exist, you may also want to use `python3`.
+
+        ``` shell
+        which python
+        python --version
+        ```
+
+    === ":fontawesome-brands-windows: Windows"
+        The
+        [Python launcher for Windows](https://docs.python.org/3/using/windows.html#python-launcher-for-windows) (`py`) can help manage versions.
+
+        ``` powershell
+        which python
+        python --version
+        py --list-paths
+        ```
+
+???+ Tip "Tip - Virtual environments"
+    We recommend using virtual environments to manage python packages, such as
+    through `venv`
+    ([about](https://docs.python.org/3/library/venv.html),
+    [tutorial](https://docs.python.org/3/tutorial/venv.html)):
+
+    === ":fontawesome-brands-linux: Linux"
+
+        ``` shell
+        python -m venv .venv
+        source .venv/bin/activate
+        ```
+
+    === ":fontawesome-brands-apple: macOS"
+
+        ``` shell
+        python -m venv .venv
+        source .venv/bin/activate
+        ```
+
+    === ":fontawesome-brands-windows: Windows"
+
+        ``` powershell
+        python -m venv .venv
+        .venv\Scripts\activate.bat
+        ```
+
+    When done, run `deactivate`.
+
+``` shell
+# Upgrade PIP before installing other requirements
+python -m pip install --upgrade pip
+
+# Install IREE build requirements
+python -m pip install -r runtime/bindings/python/iree/runtime/build_requirements.txt
+```
+
+### Building with CMake
+
+To build the Python bindings, configure CMake with the
+`IREE_BUILD_PYTHON_BINDINGS` option. We also recommend explicitly setting which
+Python executable to use with `Python3_EXECUTABLE`:
+
+``` shell
+# Configure (including other options as discussed above)
+cmake -G Ninja -B ../iree-build/ \
+  -DIREE_BUILD_PYTHON_BINDINGS=ON  \
+  -DPython3_EXECUTABLE="$(which python3)" \
+  .
+
+# Build
+cmake --build ../iree-build/
+```
+
+### Using the Python bindings
+
+There are two available methods for installing the Python bindings, either
+through creating an editable wheel or through extending `PYTHONPATH`.
+
+#### Option A: Installing the bindings as editable wheels
+
+This method links the files in your build tree into your Python package directory
+as an editable wheel.
+
+=== ":fontawesome-brands-linux: Linux"
+
+    ``` shell
+    CMAKE_INSTALL_METHOD=ABS_SYMLINK python -m pip install -e ../iree-build/compiler
+    CMAKE_INSTALL_METHOD=ABS_SYMLINK python -m pip install -e ../iree-build/runtime
+    ```
+
+=== ":fontawesome-brands-apple: macOS"
+
+    ``` shell
+    CMAKE_INSTALL_METHOD=ABS_SYMLINK python -m pip install -e ../iree-build/compiler
+    CMAKE_INSTALL_METHOD=ABS_SYMLINK python -m pip install -e ../iree-build/runtime
+    ```
+
+=== ":fontawesome-brands-windows: Windows"
+
+    ``` powershell
+    $env:CMAKE_INSTALL_MODE="ABS_SYMLINK"
+    python -m pip install -e ..\iree-build\compiler
+    python -m pip install -e ..\iree-build\runtime
+    $env:CMAKE_INSTALL_MODE=null
+    ```
+
+#### Option B: Extending PYTHONPATH
+
+This method more effectively captures the state of your build directory,
+but is prone to errors arising from forgetting to source the environment
+variables.
+
+Extend your `PYTHONPATH` with IREE's `bindings/python` paths and try importing:
+
+=== ":fontawesome-brands-linux: Linux"
+
+    ``` shell
+    source ../iree-build/.env && export PYTHONPATH
+    # The 'PYTHONPATH' environment variable should now contain
+    #   iree-build/compiler/bindings/python;iree-build/runtime/bindings/python
+
+    python -c "import iree.compiler; help(iree.compiler)"
+    python -c "import iree.runtime; help(iree.runtime)"
+    ```
+
+=== ":fontawesome-brands-apple: macOS"
+
+    ``` shell
+    source ../iree-build/.env && export PYTHONPATH
+    # The 'PYTHONPATH' environment variable should now contain
+    #   iree-build/compiler/bindings/python;iree-build/runtime/bindings/python
+
+    python -c "import iree.compiler; help(iree.compiler)"
+    python -c "import iree.runtime; help(iree.runtime)"
+    ```
+
+=== ":fontawesome-brands-windows: Windows"
+
+    ``` powershell
+    ..\iree-build\.env.ps1  # or ..\iree-build\.env.bat
+    # The 'PYTHONPATH' environment variable should now contain
+    #   iree-build/compiler/bindings/python;iree-build/runtime/bindings/python
+
+    python -c "import iree.compiler; help(iree.compiler)"
+    python -c "import iree.runtime; help(iree.runtime)"
+    ```
+
+#### Tensorflow/TFLite bindings
+
+Using IREE's TensorFlow/TFLite importers requires a few extra steps:
+
+``` shell
+# Install test requirements
+python -m pip install -r integrations/tensorflow/test/requirements.txt
+
+# Install pure Python packages (no build required)
+# You may use `pip install -e` here to create an editable wheel.
+python -m pip install integrations/tensorflow/python_projects/iree_tf
+python -m pip install integrations/tensorflow/python_projects/iree_tflite
+
+# Then test the tools:
+iree-import-tf --help
+iree-import-tflite --help
 ```

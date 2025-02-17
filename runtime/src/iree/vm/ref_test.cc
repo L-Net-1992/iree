@@ -73,9 +73,9 @@ static iree_vm_ref_t MakeRef(InstancePtr& instance, const char* type_name) {
 // WARNING: this is an implementation detail and must never be relied on - it's
 // only here to test the expected behavior.
 static int32_t ReadCounter(iree_vm_ref_t* ref) {
-  return iree_atomic_load_int32((iree_atomic_ref_count_t*)ref->ptr +
-                                    (ref->type & IREE_VM_REF_TYPE_TAG_BIT_MASK),
-                                iree_memory_order_seq_cst);
+  return iree_atomic_load((iree_atomic_ref_count_t*)ref->ptr +
+                              (ref->type & IREE_VM_REF_TYPE_TAG_BIT_MASK),
+                          iree_memory_order_seq_cst);
 }
 
 }  // namespace
@@ -162,6 +162,33 @@ TEST(VMRefTest, WrappingReleasesExisting) {
   iree_vm_ref_t ref = {0};
   iree_vm_ref_wrap_assign(new ref_object_c_t(), ref_object_c_registration,
                           &ref);
+  EXPECT_EQ(1, ReadCounter(&ref));
+  iree_vm_ref_release(&ref);
+}
+
+// Tests that wrapping releases any existing ref in out_ref.
+TEST(VMRefTest, WrappingRetainExisting) {
+  auto instance = MakeInstance();
+  RegisterTypeC(instance);
+  iree_vm_ref_t ref = {0};
+  iree_vm_ref_wrap_retain(new ref_object_c_t(), ref_object_c_registration,
+                          &ref);
+  EXPECT_EQ(2, ReadCounter(&ref));
+  iree_vm_ref_t ref_t = ref;
+  iree_vm_ref_release(&ref);
+  iree_vm_ref_release(&ref_t);
+}
+
+// Tests that wrapping with the existing ref in out_ref being the same does not
+// change the counter (as wrap_retain is a retain+release).
+TEST(VMRefTest, WrappingRetainExistingSame) {
+  auto instance = MakeInstance();
+  RegisterTypeC(instance);
+  iree_vm_ref_t ref = {0};
+  iree_vm_ref_wrap_assign(new ref_object_c_t(), ref_object_c_registration,
+                          &ref);
+  EXPECT_EQ(1, ReadCounter(&ref));
+  iree_vm_ref_wrap_retain(ref.ptr, ref_object_c_registration, &ref);
   EXPECT_EQ(1, ReadCounter(&ref));
   iree_vm_ref_release(&ref);
 }

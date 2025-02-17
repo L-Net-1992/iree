@@ -6,9 +6,8 @@
 
 #include "iree/compiler/Codegen/Utils/Utils.h"
 #include "iree/compiler/Dialect/VMVX/IR/VMVXDialect.h"
-#include "iree/compiler/Dialect/VMVX/Transforms/PassDetail.h"
 #include "iree/compiler/Dialect/VMVX/Transforms/Passes.h"
-#include "iree/compiler/Utils/IndexSet.h"
+#include "iree/compiler/Utils/IntegerSet.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -23,6 +22,9 @@
 
 namespace mlir::iree_compiler::IREE::VMVX {
 
+#define GEN_PASS_DEF_RESOLVEBUFFERDESCRIPTORSPASS
+#include "iree/compiler/Dialect/VMVX/Transforms/Passes.h.inc"
+
 namespace {
 /// Helper struct to return the offset, sizes and strides
 /// of a `source` of a `memref.extract_strided_metadata` op.
@@ -31,7 +33,7 @@ struct DescriptorInfo {
   SmallVector<OpFoldResult> sizes;
   SmallVector<OpFoldResult> strides;
 };
-}  // namespace
+} // namespace
 
 /// Returns an AffineMap for an add or a mul.
 static AffineMap getAddMap(MLIRContext *context) {
@@ -75,8 +77,9 @@ static FailureOr<DescriptorInfo> resolveBufferDescriptorForSubview(
 
 /// Returns the strides based on the sizes assuming that the `memref`
 /// has default layout, i.e. it is not a result of a subview.
-static SmallVector<OpFoldResult> getStridesFromSizes(
-    RewriterBase &rewriter, Location loc, ArrayRef<OpFoldResult> sizes) {
+static SmallVector<OpFoldResult>
+getStridesFromSizes(RewriterBase &rewriter, Location loc,
+                    ArrayRef<OpFoldResult> sizes) {
   if (sizes.size() == 0) {
     return {};
   }
@@ -96,7 +99,7 @@ static SmallVector<OpFoldResult> getStridesFromSizes(
 static FailureOr<DescriptorInfo> resolveBufferDescriptorForInterfaceBinding(
     IREE::HAL::InterfaceBindingSubspanOp binding, RewriterBase &rewriter,
     Location loc) {
-  auto memRefType = binding.getResult().getType().template cast<MemRefType>();
+  auto memRefType = llvm::cast<MemRefType>(binding.getResult().getType());
   int rank = memRefType.getRank();
   DescriptorInfo resultDescriptor;
 
@@ -121,8 +124,9 @@ static FailureOr<DescriptorInfo> resolveBufferDescriptorForInterfaceBinding(
   return resultDescriptor;
 }
 
-static FailureOr<DescriptorInfo> resolveBufferDescriptorForAllocation(
-    memref::AllocaOp alloca, RewriterBase &rewriter, Location loc) {
+static FailureOr<DescriptorInfo>
+resolveBufferDescriptorForAllocation(memref::AllocaOp alloca,
+                                     RewriterBase &rewriter, Location loc) {
   DescriptorInfo resultDescriptor;
 
   // Replace the op with values:
@@ -130,7 +134,7 @@ static FailureOr<DescriptorInfo> resolveBufferDescriptorForAllocation(
   //   offset: byte offset from subspan divided by element type size
   //   sizes: static and dynamic sizes from the subspan
   //   strides: identity strides
-  auto memRefType = alloca.getResult().getType().cast<MemRefType>();
+  auto memRefType = llvm::cast<MemRefType>(alloca.getResult().getType());
   int rank = memRefType.getRank();
 
   // Compute sizes.
@@ -153,8 +157,9 @@ static FailureOr<DescriptorInfo> resolveBufferDescriptorForAllocation(
   return resultDescriptor;
 }
 
-static FailureOr<DescriptorInfo> resolveBufferDescriptorForGetGlobalOp(
-    memref::GetGlobalOp global, RewriterBase &rewriter, Location loc) {
+static FailureOr<DescriptorInfo>
+resolveBufferDescriptorForGetGlobalOp(memref::GetGlobalOp global,
+                                      RewriterBase &rewriter, Location loc) {
   IndexSet indexSet(loc, rewriter);
   DescriptorInfo resultDescriptor;
 
@@ -163,7 +168,7 @@ static FailureOr<DescriptorInfo> resolveBufferDescriptorForGetGlobalOp(
   //   offset: byte offset from subspan divided by element type size
   //   sizes: static and dynamic sizes from the subspan
   //   strides: identity strides
-  auto memRefType = global.getResult().getType().cast<MemRefType>();
+  auto memRefType = llvm::cast<MemRefType>(global.getResult().getType());
   int rank = memRefType.getRank();
 
   // Compute sizes.
@@ -187,9 +192,10 @@ static FailureOr<DescriptorInfo> resolveBufferDescriptorForGetGlobalOp(
 
 /// Replaces the offsets, sizes and strides based on values provided
 /// by `DescriptorInfo` object.
-static void replaceOffsetSizesAndStridesWith(
-    RewriterBase &rewriter, GetBufferDescriptorOp op,
-    const DescriptorInfo &resultDescriptor) {
+static void
+replaceOffsetSizesAndStridesWith(RewriterBase &rewriter,
+                                 GetBufferDescriptorOp op,
+                                 const DescriptorInfo &resultDescriptor) {
   int rank = resultDescriptor.sizes.size();
   assert(rank == resultDescriptor.strides.size() &&
          "expected number of sizes and strides to match");
@@ -223,14 +229,15 @@ struct FromMemRefSubView : public OpRewritePattern<GetBufferDescriptorOp> {
   LogicalResult matchAndRewrite(GetBufferDescriptorOp op,
                                 PatternRewriter &rewriter) const override {
     auto subview = op.getSource().template getDefiningOp<memref::SubViewOp>();
-    if (!subview) return failure();
+    if (!subview)
+      return failure();
     auto loc = op.getLoc();
     IndexSet indexSet(loc, rewriter);
 
     // Get types.
-    auto subType = subview.getResult().getType().template cast<MemRefType>();
+    auto subType = llvm::cast<MemRefType>(subview.getResult().getType());
     Value source = subview.getSource();
-    auto sourceType = source.getType().template cast<MemRefType>();
+    auto sourceType = llvm::cast<MemRefType>(source.getType());
     int sourceRank = sourceType.getRank();
     int subRank = subType.getRank();
     (void)subRank;
@@ -258,7 +265,8 @@ struct FromMemRefSubView : public OpRewritePattern<GetBufferDescriptorOp> {
     llvm::SmallBitVector droppedDims = subview.getDroppedDims();
     int targetIndex = 0;
     for (int i = 0; i < sourceRank; ++i) {
-      if (droppedDims.test(i)) continue;
+      if (droppedDims.test(i))
+        continue;
       rewriter.replaceAllUsesWith(
           op.getSizes()[targetIndex],
           getValueOrCreateConstantIndexOp(rewriter, loc,
@@ -288,7 +296,8 @@ struct FromHalInterfaceBindingSubspan
     auto binding =
         op.getSource()
             .template getDefiningOp<IREE::HAL::InterfaceBindingSubspanOp>();
-    if (!binding) return failure();
+    if (!binding)
+      return failure();
 
     auto loc = op.getLoc();
     FailureOr<DescriptorInfo> resultDescriptor =
@@ -305,7 +314,7 @@ struct FromHalInterfaceBindingSubspan
         op.getBaseBuffer(),
         rewriter
             .create<IREE::VMVX::GetRawInterfaceBindingBufferOp>(
-                loc, op.getBaseBuffer().getType(), binding.getSetAttr(),
+                loc, op.getBaseBuffer().getType(), binding.getLayout(),
                 binding.getBindingAttr())
             .getResult());
 
@@ -316,9 +325,10 @@ struct FromHalInterfaceBindingSubspan
 
 /// Function to handle replacement of base pointer of buffer
 /// descriptors.
-static Value getBaseBufferReplacementForDescriptor(
-    GetBufferDescriptorOp descriptorOp, RewriterBase &rewriter, Location loc,
-    Value source) {
+static Value
+getBaseBufferReplacementForDescriptor(GetBufferDescriptorOp descriptorOp,
+                                      RewriterBase &rewriter, Location loc,
+                                      Value source) {
   return rewriter
       .create<UnrealizedConversionCastOp>(
           loc, descriptorOp.getBaseBuffer().getType(), source)
@@ -332,8 +342,9 @@ struct FromAllocation : public OpRewritePattern<GetBufferDescriptorOp> {
   LogicalResult matchAndRewrite(GetBufferDescriptorOp op,
                                 PatternRewriter &rewriter) const override {
     auto alloca = op.getSource().template getDefiningOp<memref::AllocaOp>();
-    if (!alloca) return failure();
-    auto memRefType = alloca.getResult().getType().template cast<MemRefType>();
+    if (!alloca)
+      return failure();
+    auto memRefType = llvm::cast<MemRefType>(alloca.getResult().getType());
     if (!memRefType.getLayout().isIdentity()) {
       return rewriter.notifyMatchFailure(op, "not identity allocation");
     }
@@ -365,8 +376,9 @@ struct FromGlobal : public OpRewritePattern<GetBufferDescriptorOp> {
   LogicalResult matchAndRewrite(GetBufferDescriptorOp op,
                                 PatternRewriter &rewriter) const override {
     auto global = op.getSource().template getDefiningOp<memref::GetGlobalOp>();
-    if (!global) return failure();
-    auto memRefType = global.getResult().getType().template cast<MemRefType>();
+    if (!global)
+      return failure();
+    auto memRefType = llvm::cast<MemRefType>(global.getResult().getType());
     if (!memRefType.getLayout().isIdentity()) {
       return rewriter.notifyMatchFailure(op, "not identity allocation");
     }
@@ -395,9 +407,10 @@ struct FromGlobal : public OpRewritePattern<GetBufferDescriptorOp> {
 // Pass To resovle descriptors.
 //===---------------------------------------------------------------------===//
 
-class ResolveBufferDescriptorsPass
-    : public ResolveBufferDescriptorsBase<ResolveBufferDescriptorsPass> {
- public:
+class ResolveBufferDescriptorsPass final
+    : public impl::ResolveBufferDescriptorsPassBase<
+          ResolveBufferDescriptorsPass> {
+public:
   ResolveBufferDescriptorsPass() = default;
   ResolveBufferDescriptorsPass(const ResolveBufferDescriptorsPass &) {}
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -409,8 +422,7 @@ class ResolveBufferDescriptorsPass
     patterns.insert<FromAllocation, FromGlobal, FromHalInterfaceBindingSubspan,
                     FromMemRefSubView>(&getContext());
 
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       return signalPassFailure();
     }
 
@@ -440,10 +452,5 @@ class ResolveBufferDescriptorsPass
       llvm::cl::init(false)};
 };
 
-}  // namespace
-
-std::unique_ptr<mlir::OperationPass<>> createResolveBufferDescriptorsPass() {
-  return std::make_unique<ResolveBufferDescriptorsPass>();
-}
-
-}  // namespace mlir::iree_compiler::IREE::VMVX
+} // namespace
+} // namespace mlir::iree_compiler::IREE::VMVX

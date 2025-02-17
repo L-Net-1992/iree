@@ -13,7 +13,6 @@
 #include "iree/base/internal/file_io.h"
 #include "iree/base/internal/flags.h"
 #include "iree/base/internal/path.h"
-#include "iree/base/tracing.h"
 #include "iree/hal/local/loaders/registration/init.h"
 #include "iree/hal/local/plugins/registration/init.h"
 #include "iree/modules/hal/inline/module.h"
@@ -21,6 +20,7 @@
 #include "iree/modules/hal/module.h"
 #include "iree/tooling/device_util.h"
 #include "iree/tooling/modules/resolver.h"
+#include "iree/tooling/parameter_util.h"
 #include "iree/vm/bytecode/module.h"
 #include "iree/vm/dynamic/module.h"
 
@@ -35,6 +35,14 @@ IREE_FLAG_LIST(
     "are registered in the order defined by the flags with all dependencies\n"
     "for a module needing to have been registered prior to the dependent\n"
     "module. HAL modules are added automatically when required.");
+
+IREE_FLAG(
+    string, module_mode, "preload",
+    "A module I/O mode of ['preload', 'mmap'].\n"
+    "  preload: read entire module into wired memory on startup.\n"
+    "  mmap: maps the module file into discardable memory - can increase\n"
+    "        warm-up time and variance as mapped pages are swapped\n"
+    "        by the OS.");
 
 static iree_status_t iree_tooling_load_bytecode_module(
     iree_vm_instance_t* instance, iree_string_view_t path,
@@ -52,8 +60,20 @@ static iree_status_t iree_tooling_load_bytecode_module(
   } else {
     char path_str[2048] = {0};
     iree_string_view_to_cstring(path, path_str, sizeof(path_str));
+    iree_file_read_flags_t read_flags = 0;
+    if (strcmp(FLAG_module_mode, "mmap") == 0) {
+      read_flags |= IREE_FILE_READ_FLAG_MMAP;
+    } else if (strcmp(FLAG_module_mode, "preload") == 0) {
+      read_flags |= IREE_FILE_READ_FLAG_PRELOAD;
+    } else {
+      IREE_TRACE_ZONE_END(z0);
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "unrecognized --module_mode= value '%s'",
+                              FLAG_module_mode);
+    }
     IREE_RETURN_AND_END_ZONE_IF_ERROR(
-        z0, iree_file_read_contents(path_str, host_allocator, &file_contents));
+        z0, iree_file_read_contents(path_str, read_flags, host_allocator,
+                                    &file_contents));
   }
 
   // Try to load the module as bytecode (all we have today that we can use).
@@ -108,8 +128,9 @@ iree_status_t iree_tooling_load_modules_from_flags(
   iree_host_size_t new_count = list->count + FLAG_module_list().count;
   if (new_count > list->capacity) {
     return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
-                            "too many modules; currently only %zu are "
-                            "supported but at least %zu are requested",
+                            "too many modules; currently only %" PRIhsz
+                            " are supported but at least %" PRIhsz
+                            " are requested",
                             list->capacity, new_count);
   }
   IREE_TRACE_ZONE_BEGIN(z0);
@@ -175,16 +196,20 @@ static iree_status_t iree_tooling_load_hal_async_module(
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
       z0, iree_hal_module_register_all_types(instance));
 
-  // Create the device to use.
-  // In the future this will change to a set of available devices instead.
+  // Create the device(s) to use.
   if (iree_string_view_is_empty(default_device_uri)) {
     default_device_uri = iree_hal_default_device_uri();
   }
-  iree_hal_device_t* device = NULL;
+  iree_hal_device_list_t* device_list = NULL;
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
-      z0, iree_hal_create_device_from_flags(
+      z0, iree_hal_create_devices_from_flags(
               iree_hal_available_driver_registry(), default_device_uri,
-              host_allocator, &device));
+              host_allocator, &device_list));
+
+  // Pick a lead device we'll use for bookkeeping.
+  iree_hal_device_t* device = iree_hal_device_list_at(device_list, 0);
+  IREE_ASSERT(device, "require at least one device");
+  iree_hal_device_retain(device);
 
   // Fetch the allocator from the device to pass back to the caller.
   iree_hal_allocator_t* device_allocator = iree_hal_device_allocator(device);
@@ -193,8 +218,11 @@ static iree_status_t iree_tooling_load_hal_async_module(
   // Create HAL module wrapping the device created above.
   iree_hal_module_flags_t flags = IREE_HAL_MODULE_FLAG_NONE;
   iree_vm_module_t* module = NULL;
-  iree_status_t status =
-      iree_hal_module_create(instance, device, flags, host_allocator, &module);
+  iree_status_t status = iree_hal_module_create(
+      instance, device_list->count, device_list->devices, flags,
+      iree_hal_module_debug_sink_stdio(stderr), host_allocator, &module);
+
+  iree_hal_device_list_free(device_list);
 
   if (iree_status_is_ok(status)) {
     *out_module = module;
@@ -252,7 +280,8 @@ static iree_status_t iree_tooling_load_hal_inline_module(
   iree_hal_inline_module_flags_t flags = IREE_HAL_INLINE_MODULE_FLAG_NONE;
   iree_vm_module_t* module = NULL;
   iree_status_t status = iree_hal_inline_module_create(
-      instance, flags, device_allocator, host_allocator, &module);
+      instance, flags, iree_hal_module_debug_sink_stdio(stderr),
+      device_allocator, host_allocator, &module);
 
   if (iree_status_is_ok(status)) {
     *out_module = module;
@@ -404,6 +433,10 @@ static iree_status_t iree_tooling_resolve_module_dependency_callback(
   } else if (iree_string_view_equal(dependency->name, IREE_SV("hal_loader"))) {
     IREE_RETURN_IF_ERROR(iree_tooling_load_hal_loader_module(
         state->instance, state->host_allocator, &module));
+  } else if (iree_string_view_equal(dependency->name,
+                                    IREE_SV("io_parameters"))) {
+    IREE_RETURN_IF_ERROR(iree_tooling_create_parameters_module_from_flags(
+        state->instance, state->host_allocator, &module));
   } else {
     // Defer to the generic module resolver registry.
     IREE_RETURN_IF_ERROR(iree_tooling_resolve_module_dependency(
@@ -496,7 +529,7 @@ iree_status_t iree_tooling_find_single_exported_function(
     IREE_RETURN_IF_ERROR(
         iree_vm_module_lookup_function_by_ordinal(
             module, IREE_VM_FUNCTION_LINKAGE_EXPORT, i, &function),
-        "looking up function export %zu", i);
+        "looking up function export %" PRIhsz, i);
     iree_string_view_t function_name = iree_vm_function_name(&function);
     if (iree_string_view_starts_with(function_name,
                                      iree_make_cstring_view("__")) ||

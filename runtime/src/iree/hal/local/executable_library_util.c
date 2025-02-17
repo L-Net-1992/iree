@@ -17,26 +17,37 @@ iree_status_t iree_hal_executable_library_verify(
                         IREE_HAL_EXECUTABLE_CACHING_MODE_DISABLE_VERIFICATION);
   if (disable_verification) return iree_ok_status();
 
-  // Check that there's one pipeline layout per export. Multiple exports may
-  // share the same layout but it still needs to be declared.
-  // NOTE: pipeline layouts are optional but if provided must be consistent.
-  if (executable_params->pipeline_layout_count > 0) {
-    if (library->exports.count != executable_params->pipeline_layout_count) {
-      return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
-                              "executable provides %u entry points but caller "
-                              "provided %zu; must match",
-                              library->exports.count,
-                              executable_params->pipeline_layout_count);
-    }
-  }
-
   // Check to make sure that the constant table has values for all constants.
   if (library->constants.count != executable_params->constant_count) {
     return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
                             "executable requires %u constants but caller "
-                            "provided %zu; must match",
+                            "provided %" PRIhsz "; must match",
                             library->constants.count,
                             executable_params->constant_count);
+  }
+
+  // If dispatch attributes are present validate they are in range.
+  if (library->exports.attrs) {
+    for (uint32_t i = 0; i < library->exports.count; ++i) {
+      const iree_hal_executable_dispatch_attrs_v0_t dispatch_attrs =
+          library->exports.attrs[i];
+      if (dispatch_attrs.constant_count >
+          IREE_HAL_EXECUTABLE_MAX_CONSTANT_COUNT) {
+        return iree_make_status(
+            IREE_STATUS_OUT_OF_RANGE,
+            "dispatch requiring %u constants exceeds limit of %d",
+            dispatch_attrs.constant_count,
+            IREE_HAL_EXECUTABLE_MAX_CONSTANT_COUNT);
+      }
+      if (dispatch_attrs.binding_count >
+          IREE_HAL_EXECUTABLE_MAX_BINDING_COUNT) {
+        return iree_make_status(
+            IREE_STATUS_OUT_OF_RANGE,
+            "dispatch requiring %u bindings exceeds limit of %d",
+            dispatch_attrs.binding_count,
+            IREE_HAL_EXECUTABLE_MAX_BINDING_COUNT);
+      }
+    }
   }
 
   return iree_ok_status();
@@ -52,7 +63,7 @@ iree_status_t iree_hal_executable_library_initialize_imports(
   IREE_ASSERT_ARGUMENT(import_thunk);
   if (!import_table || !import_table->count) return iree_ok_status();
   IREE_TRACE_ZONE_BEGIN(z0);
-  IREE_TRACE_ZONE_APPEND_VALUE(z0, import_table->count);
+  IREE_TRACE_ZONE_APPEND_VALUE_I64(z0, import_table->count);
 
   // The thunk is used to give the loader a chance to intercept import calls
   // in cases where it needs to JIT, perform FFI/ABI conversion, etc.
@@ -100,6 +111,17 @@ void iree_hal_executable_library_deinitialize_imports(
 
 #if IREE_TRACING_FEATURES & IREE_TRACING_FEATURE_INSTRUMENTATION
 
+void iree_hal_executable_library_publish_source_files(
+    const iree_hal_executable_library_v0_t* library) {
+  for (uint32_t i = 0; i < library->sources.count; ++i) {
+    const iree_hal_executable_source_file_v0_t* source_file =
+        &library->sources.files[i];
+    IREE_TRACE_PUBLISH_SOURCE_FILE(source_file->path, source_file->path_length,
+                                   source_file->content,
+                                   source_file->content_length);
+  }
+}
+
 iree_zone_id_t iree_hal_executable_library_call_zone_begin(
     iree_string_view_t executable_identifier,
     const iree_hal_executable_library_v0_t* library, iree_host_size_t ordinal) {
@@ -113,17 +135,34 @@ iree_zone_id_t iree_hal_executable_library_call_zone_begin(
 
   const char* source_file = NULL;
   size_t source_file_length = 0;
-  uint32_t source_line;
-  if (library->exports.src_locs != NULL) {
-    // We have source location data, so use it.
-    source_file = library->exports.src_locs[ordinal].path;
-    source_file_length = library->exports.src_locs[ordinal].path_length;
-    source_line = library->exports.src_locs[ordinal].line;
-  } else {
-    // No source location data, so make do with what we have.
-    source_file = executable_identifier.data;
-    source_file_length = executable_identifier.size;
-    source_line = ordinal;
+  uint32_t source_line = 0;
+  if (library->exports.stage_locations != NULL) {
+    for (uint32_t i = 0; i < library->exports.stage_locations->count; ++i) {
+      // TODO(benvanik): a way to select what location is chosen. For now we
+      // just pick the first one.
+      // const char* name = library->exports.stage_locations->names[i];
+      const iree_hal_executable_source_location_v0_t* location =
+          &library->exports.stage_locations->locations[i];
+      source_file = location->path;
+      source_file_length = location->path_length;
+      source_line = location->line;
+      break;
+    }
+  }
+  if (source_file == NULL) {
+    if (library->exports.source_locations != NULL) {
+      // We have source location data, so use it.
+      const iree_hal_executable_source_location_v0_t* location =
+          &library->exports.source_locations[ordinal];
+      source_file = location->path;
+      source_file_length = location->path_length;
+      source_line = location->line;
+    } else {
+      // No source location data, so make do with what we have.
+      source_file = executable_identifier.data;
+      source_file_length = executable_identifier.size;
+      source_line = ordinal;
+    }
   }
 
   IREE_TRACE_ZONE_BEGIN_EXTERNAL(z0, source_file, source_file_length,

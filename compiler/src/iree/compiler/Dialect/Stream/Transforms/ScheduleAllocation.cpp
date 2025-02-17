@@ -4,64 +4,108 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/Dialect/Stream/Analysis/Partitioning.h"
 #include "iree/compiler/Dialect/Stream/IR/StreamDialect.h"
 #include "iree/compiler/Dialect/Stream/IR/StreamOps.h"
 #include "iree/compiler/Dialect/Stream/IR/StreamTypes.h"
-#include "iree/compiler/Dialect/Stream/Transforms/PassDetail.h"
 #include "iree/compiler/Dialect/Stream/Transforms/Passes.h"
 #include "iree/compiler/Dialect/Util/IR/UtilDialect.h"
-#include "iree/compiler/Dialect/Util/IR/UtilOps.h"
 #include "iree/compiler/Dialect/Util/IR/UtilTypes.h"
-#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/EquivalenceClasses.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
 #define DEBUG_TYPE "iree-stream-schedule-allocation"
 
-namespace mlir {
-namespace iree_compiler {
-namespace IREE {
-namespace Stream {
+namespace mlir::iree_compiler::IREE::Stream {
+
+#define GEN_PASS_DEF_SCHEDULEALLOCATIONPASS
+#include "iree/compiler/Dialect/Stream/Transforms/Passes.h.inc"
+
 namespace {
 
 //===----------------------------------------------------------------------===//
 // Alias analysis
 //===----------------------------------------------------------------------===//
 
-using ValueAliasingMap = llvm::MapVector<Value, SmallPtrSet<Value, 16>>;
+// Disjoint-set data structure holding non-overlapping sets of aliasing values.
+class ValueAliasingSet {
+public:
+  void addAlias(Value aliasee, Value aliaser) {
+    auto aliaseeWithId = getWithId(aliasee);
+    auto aliaserWithId = getWithId(aliaser);
+    valueAliasing.unionSets(aliaseeWithId, aliaserWithId);
+  }
+
+  SmallVector<SmallVector<Value>> getValueAliasSets() const {
+    SmallVector<SmallVector<Value>> result;
+    for (auto it = valueAliasing.begin(); it != valueAliasing.end(); ++it) {
+      if (!it->isLeader())
+        continue; // Ignore non-leader sets.
+      auto &aliasSet = result.emplace_back();
+      for (auto mi = valueAliasing.member_begin(it);
+           mi != valueAliasing.member_end(); ++mi) {
+        aliasSet.push_back(mi->value);
+      }
+    }
+    return result;
+  }
+
+  auto getValueAliases(Value value) const {
+    return llvm::make_filter_range(
+        llvm::map_range(
+            llvm::make_range(valueAliasing.findLeader(getWithId(value)),
+                             valueAliasing.member_end()),
+            NumberedValue::getValue),
+        [=](Value aliaser) { return aliaser != value; });
+  }
+
+private:
+  // EquivalenceClasses require ordering for value type to return deterministic
+  // results, so we provide it by assigning id to all values added to the set.
+  struct NumberedValue {
+    Value value;
+    int64_t id;
+
+    static Value getValue(const NumberedValue &value) { return value.value; }
+  };
+
+  struct Comparator {
+    int operator()(const NumberedValue &a, const NumberedValue &b) const {
+      return a.id < b.id;
+    }
+  };
+
+  NumberedValue getWithId(Value value) const {
+    auto [iterator, inserted] = id.try_emplace(value, id.size());
+    return {value, iterator->second};
+  }
+
+  mutable llvm::DenseMap<Value, int64_t> id;
+  llvm::EquivalenceClasses<NumberedValue, Comparator> valueAliasing;
+};
 
 // Builds a map of value aliases from aliasee to a set of aliasers.
 // Only values that alias will be present in the map. The map may contain
 // values nested within the |regionOp|.
 static void computeRegionValueAliases(Operation *regionOp,
-                                      ValueAliasingMap &valueAliases) {
+                                      ValueAliasingSet &valueAliases) {
   auto *block = &regionOp->getRegion(0).front();
-
-  auto propagateAlias = [&](Value streamValue, Value aliasedValue) {
-    auto &baseSet = valueAliases[streamValue];
-    baseSet.insert(aliasedValue);
-    auto &aliasedSet = valueAliases[aliasedValue];
-    baseSet.insert(aliasedSet.begin(), aliasedSet.end());
-    aliasedSet.insert(streamValue);
-  };
 
   // Filter out to only resource results - some regions may return additional
   // things like stream.async.execute returning a timepoint.
-  auto resourceResults = llvm::to_vector_of<OpResult>(
-      llvm::make_filter_range(regionOp->getResults(), [](OpResult result) {
-        return result.getType().isa<IREE::Stream::ResourceType>();
-      }));
+  auto resourceResults =
+      llvm::filter_to_vector(regionOp->getResults(), [](OpResult result) {
+        return llvm::isa<IREE::Stream::ResourceType>(result.getType());
+      });
 
   // Start with outputs so that we handle tied values that may lead all the way
   // back up the chain to the stream inputs.
@@ -73,7 +117,7 @@ static void computeRegionValueAliases(Operation *regionOp,
         tiedStreamOp.getTiedResultOperandIndex(outerResult.getResultNumber());
     if (tiedOperandIndex.has_value()) {
       auto arg = block->getArgument(tiedOperandIndex.value());
-      propagateAlias(innerResult, arg);
+      valueAliases.addAlias(innerResult, arg);
     }
   }
 
@@ -90,35 +134,23 @@ static void computeRegionValueAliases(Operation *regionOp,
     // Tied results reuse their operand buffer.
     auto tiedOp = dyn_cast<IREE::Util::TiedOpInterface>(op);
     for (auto result : op.getResults()) {
-      if (!result.getType().isa<IREE::Stream::ResourceType>()) continue;
+      if (!llvm::isa<IREE::Stream::ResourceType>(result.getType()))
+        continue;
       if (tiedOp) {
         auto tiedOperand = tiedOp.getTiedResultOperand(result);
         if (tiedOperand) {
-          propagateAlias(result, tiedOperand);
-        }
-      }
-    }
-  }
-
-  // Invert the value aliaser->aliasee map so that we have for any particular
-  // value the list of all other values that alias it.
-  for (auto it : valueAliases) {
-    for (auto aliasee : it.second) {
-      for (auto aliaser : it.second) {
-        if (aliaser != aliasee) {
-          valueAliases[aliasee].insert(aliaser);
+          valueAliases.addAlias(result, tiedOperand);
         }
       }
     }
   }
 }
 
-// Builds a map of value aliases from aliasee to a set of aliasers.
-// Only values that alias will be present in the map. The map may contain
-// values nested within the |executeOp|.
-static ValueAliasingMap computeExecutionRegionValueAliases(
-    IREE::Stream::AsyncExecuteOp executeOp) {
-  ValueAliasingMap valueAliases;
+// Builds a set of aliasing sets. Only values that alias will be present in the
+// set. The set may contain values nested within the |executeOp|.
+static ValueAliasingSet
+computeExecutionRegionValueAliases(IREE::Stream::AsyncExecuteOp executeOp) {
+  ValueAliasingSet valueAliases;
   computeRegionValueAliases(executeOp, valueAliases);
   return valueAliases;
 }
@@ -132,7 +164,7 @@ static constexpr int LIVE_OUT = INT_MAX;
 struct LivenessInterval {
   int start = 0;
   int end = 0;
-  int ordinal = -1;  // unique per value
+  int ordinal = -1; // unique per value
   Value value;
   bool operator<(const LivenessInterval &rhs) const {
     return ordinal < rhs.ordinal;
@@ -151,9 +183,9 @@ using LivenessIntervalList = SmallVector<LivenessInterval>;
 // constituent ranges - including block arguments. Note that not all values will
 // have buffers allocated to them - we are just tracking transitive SSA value
 // lifetime.
-static LivenessIntervalList computeExecutionRegionLivenessIntervals(
-    IREE::Stream::AsyncExecuteOp executeOp,
-    const ValueAliasingMap &valueAliases) {
+static LivenessIntervalList
+computeExecutionRegionLivenessIntervals(IREE::Stream::AsyncExecuteOp executeOp,
+                                        const ValueAliasingSet &valueAliases) {
   // Perform a liveness analysis on the execution region.
   // Fragments have a single block and as such the live-in/live-out block
   // information derived here applies to the entire stream region.
@@ -173,7 +205,8 @@ static LivenessIntervalList computeExecutionRegionLivenessIntervals(
   SmallPtrSet<Value, 16> liveOuts;
   auto yieldOp = cast<IREE::Stream::YieldOp>(streamBlock->back());
   for (auto returnValue : yieldOp.getResourceOperands()) {
-    if (!returnValue.getType().isa<IREE::Stream::ResourceType>()) continue;
+    if (!llvm::isa<IREE::Stream::ResourceType>(returnValue.getType()))
+      continue;
     liveOuts.insert(returnValue);
   }
 
@@ -182,7 +215,8 @@ static LivenessIntervalList computeExecutionRegionLivenessIntervals(
   LivenessIntervalMap valueIntervals;
   int ordinal = 0;
   for (Value value : streamBlock->getArguments()) {
-    if (!value.getType().isa<IREE::Stream::ResourceType>()) continue;
+    if (!llvm::isa<IREE::Stream::ResourceType>(value.getType()))
+      continue;
     LivenessInterval interval;
     interval.start = LIVE_IN;
     if (liveOuts.contains(value)) {
@@ -199,8 +233,37 @@ static LivenessIntervalList computeExecutionRegionLivenessIntervals(
   // Compute ranges for all values independently (ignoring aliasing).
   for (auto &op : *streamBlock) {
     int start = opOrdering[&op];
+    if (auto concurrentOp = dyn_cast<IREE::Stream::AsyncConcurrentOp>(op)) {
+      // HACK: allocation planning currently only works on the top-level
+      // execute op but sometimes we need to allocate locals inside of
+      // concurrent regions. The real fix here is to make allocation planning
+      // handle arbitrary nesting but for now we do a quick walk through the
+      // regions to see if there are any locals that need to be marked live for
+      // the duration of the region.
+      concurrentOp.walk([&](Operation *op) {
+        for (auto value : op->getResults()) {
+          if (!llvm::isa<IREE::Stream::ResourceType>(value.getType()))
+            continue;
+          if (auto tiedOp = dyn_cast<Util::TiedOpInterface>(op)) {
+            // Skip tied results as their liveness is determined by the tied
+            // operand.
+            if (tiedOp.getTiedResultOperand(value))
+              continue;
+          }
+          if (!value.use_empty())
+            continue;
+          LivenessInterval interval;
+          interval.start = start;
+          interval.end = start;
+          interval.value = value;
+          interval.ordinal = -1;
+          valueIntervals[value] = interval;
+        }
+      });
+    }
     for (auto value : op.getResults()) {
-      if (!value.getType().isa<IREE::Stream::ResourceType>()) continue;
+      if (!llvm::isa<IREE::Stream::ResourceType>(value.getType()))
+        continue;
       LivenessInterval interval;
       interval.start = start;
       if (liveOuts.contains(value)) {
@@ -217,29 +280,37 @@ static LivenessIntervalList computeExecutionRegionLivenessIntervals(
     }
   }
 
-  // Walk the alias map and union intervals and propagate back.
-  for (auto it : valueAliases) {
-    auto &aliasee = it.first;
-    auto &aliasers = it.second;
-    auto &aliaseeInterval = valueIntervals[aliasee];
-    if (aliaseeInterval.ordinal == -1) {
-      // Aliasee is nested somewhere within the current scope.
-      // We'd need to update this analysis to handle the nesting in order to
-      // compute the ranges here but that's not (currently) required as all
-      // allocated values roll up to the parent scope by way of the yields.
+  // Walk the alias set and union intervals and propagate back.
+  for (auto &aliasSet : valueAliases.getValueAliasSets()) {
+
+    // Return true if value is nested  somewhere within the current scope.
+    auto isNested = [&](Value value) -> bool {
+      return valueIntervals[value].ordinal == -1;
+    };
+
+    // We'd need to update this analysis to handle the nesting in order to
+    // compute the ranges here but that's not (currently) required as all
+    // allocated values roll up to the parent scope by way of the yields.
+    if (llvm::all_of(aliasSet, isNested))
       continue;
-    }
+
+    assert((llvm::all_of(aliasSet, isNested) ||
+            llvm::none_of(aliasSet, isNested)) &&
+           "nested values can't alias values in the current scope");
+
+    auto &aliaseeInterval = valueIntervals[aliasSet.front()];
     int start = aliaseeInterval.start;
     int end = aliaseeInterval.end;
-    for (auto aliaser : aliasers) {
+
+    auto aliasers = ArrayRef(aliasSet).drop_front(1);
+    for (Value aliaser : aliasers) {
       auto &aliaserInterval = valueIntervals[aliaser];
-      assert(aliaserInterval.ordinal != -1);
       start = std::min(start, aliaserInterval.start);
       end = std::max(end, aliaserInterval.end);
     }
-    aliaseeInterval.start = start;
-    aliaseeInterval.end = end;
-    for (auto aliaser : aliasers) {
+
+    // Propagate interval back to all values in the aliasing set.
+    for (Value aliaser : aliasSet) {
       auto &aliaserInterval = valueIntervals[aliaser];
       aliaserInterval.start = start;
       aliaserInterval.end = end;
@@ -270,9 +341,7 @@ struct ResourceRange {
       : resource(resource), resourceSize(resourceSize) {}
   explicit ResourceRange(Value resource, Value resourceSize, Value offset,
                          Value length)
-      : resource(resource),
-        resourceSize(resourceSize),
-        offset(offset),
+      : resource(resource), resourceSize(resourceSize), offset(offset),
         length(length) {}
 
   Value resource = nullptr;
@@ -312,8 +381,8 @@ struct AllocationScope {
   // Execution region being allocated.
   Operation *getRootOp() const { return rootOp; }
 
-  // Aliasing map for the entire root op, indicating which values are tied.
-  const ValueAliasingMap &getValueAliases() const { return valueAliases; }
+  // Aliasing set for the entire root op, indicating which values are tied.
+  const ValueAliasingSet &getValueAliases() const { return valueAliases; }
 
   // TODO(benvanik): rework this so that we don't do a switcheroo right in the
   // middle of processing.
@@ -326,7 +395,8 @@ struct AllocationScope {
   // Returns a memoized ConstantIndexOp of |value|.
   Value lookupOrCreateIndex(int64_t value) {
     auto it = indexConstantMap.find(value);
-    if (it != indexConstantMap.end()) return it->second;
+    if (it != indexConstantMap.end())
+      return it->second;
     auto constantValue = OpBuilder(rootOp).createOrFold<arith::ConstantIndexOp>(
         rootOp->getLoc(), value);
     indexConstantMap.insert(std::make_pair(value, constantValue));
@@ -336,8 +406,10 @@ struct AllocationScope {
   // Performs a memoized add (as many adds of offsets or lengths are redundant).
   Value add(Location loc, Value lhs, Value rhs) {
     // TODO(benvanik): memoize - if worth it. Needs profiling.
-    if (matchPattern(lhs, m_Zero())) return rhs;
-    if (matchPattern(rhs, m_Zero())) return lhs;
+    if (matchPattern(lhs, m_Zero()))
+      return rhs;
+    if (matchPattern(rhs, m_Zero()))
+      return lhs;
     auto result = OpBuilder(rootOp).createOrFold<arith::AddIOp>(loc, lhs, rhs);
     return result;
   }
@@ -346,7 +418,8 @@ struct AllocationScope {
   // All aliases of |resource| will also be mapped.
   void mapResourceRange(Value resource, ResourceRange resourceRange,
                         AsmState *asmState) {
-    if (resourceRangeMap.count(resource)) return;
+    if (resourceRangeMap.count(resource))
+      return;
 
     if (!resourceRange.offset && !resourceRange.length) {
       resourceRange.offset = lookupOrCreateIndex(0);
@@ -362,15 +435,22 @@ struct AllocationScope {
       llvm::dbgs() << "\n";
     });
 
-    // TODO(#5410): make alias propagation map through an indexing map for
-    // slices/updates. Right now we assume all aliases are 1:1 full maps.
-    for (auto alias : valueAliases[resource]) {
-      resourceRangeMap.insert(std::make_pair(alias, resourceRange));
+    // Propagate alias subranges when present.
+    for (auto alias : valueAliases.getValueAliases(resource)) {
+      ResourceRange aliasRange = resourceRange;
+      if (auto subviewOp =
+              IREE::Stream::ResourceSubviewOp::findSubviewOp(alias)) {
+        aliasRange.resource = subviewOp.getSubrangeResource();
+        aliasRange.resourceSize = subviewOp.getSubrangeResourceSize();
+        aliasRange.offset = subviewOp.getSubrangeOffset();
+        aliasRange.length = subviewOp.getSubrangeLength();
+      }
+      resourceRangeMap.insert(std::make_pair(alias, aliasRange));
       LLVM_DEBUG({
         llvm::dbgs() << "   = alias ";
         alias.printAsOperand(llvm::dbgs(), *asmState);
         llvm::dbgs() << " = ";
-        resourceRange.print(llvm::dbgs(), *asmState);
+        aliasRange.print(llvm::dbgs(), *asmState);
         llvm::dbgs() << "\n";
       });
     }
@@ -410,21 +490,18 @@ struct AllocationScope {
   void forEachResourceAlias(Value resource,
                             std::function<void(Value)> callback) const {
     callback(resource);
-    auto it = valueAliases.find(resource);
-    if (it != valueAliases.end()) {
-      for (auto alias : it->second) {
-        callback(alias);
-      }
+    for (Value alias : valueAliases.getValueAliases(resource)) {
+      callback(alias);
     }
   }
 
- private:
+private:
   Operation *rootOp;
 
-  // All values that have aliases mapped to a set of all of the values they
-  // alias with. That two things alias does not imply the values can be treated
-  // as equivalent: some values may be subranges of others.
-  ValueAliasingMap valueAliases;
+  // Disjoint-set of values that alias each other. That two things alias does
+  // not imply the values can be treated as equivalent: some values may be
+  // subranges of others.
+  ValueAliasingSet valueAliases;
 
   // Index value -> std.constant index value.
   DenseMap<int64_t, Value> indexConstantMap;
@@ -433,9 +510,9 @@ struct AllocationScope {
   DenseMap<Value, ResourceRange> resourceRangeMap;
 };
 
-static LogicalResult applyResourceSubviewOp(
-    IREE::Stream::ResourceSubviewOp asyncOp, AllocationScope &scope,
-    OpBuilder builder) {
+static LogicalResult
+applyResourceSubviewOp(IREE::Stream::ResourceSubviewOp asyncOp,
+                       AllocationScope &scope, OpBuilder builder) {
   // Allocation should have taken care of this by propagating the range.
   // By the time we walk to this op there should be no more users.
   asyncOp.erase();
@@ -545,9 +622,9 @@ static LogicalResult applyAsyncCopyOp(IREE::Stream::AsyncCopyOp asyncOp,
   return success();
 }
 
-static LogicalResult applyAsyncCollectiveOp(
-    IREE::Stream::AsyncCollectiveOp asyncOp, AllocationScope &scope,
-    OpBuilder builder) {
+static LogicalResult
+applyAsyncCollectiveOp(IREE::Stream::AsyncCollectiveOp asyncOp,
+                       AllocationScope &scope, OpBuilder builder) {
   SmallVector<Value> newResources;
   SmallVector<Value> newResourceSizes;
   SmallVector<Value> newResourceOffsets;
@@ -588,20 +665,43 @@ static LogicalResult applyAsyncCollectiveOp(
   return success();
 }
 
+static LogicalResult applyAsyncBarrierOp(IREE::Stream::AsyncBarrierOp barrierOp,
+                                         AllocationScope &scope,
+                                         OpBuilder builder) {
+  // TODO: barriers are being treated as copies, they should just be metadata
+  // operations but currently it's causing failures to be removed.
+  auto sourceRange = scope.lookupResourceRange(barrierOp.getSource());
+  auto targetRange = scope.lookupResourceRange(barrierOp.getResult());
+
+  // Perform the copy.
+  builder.create<IREE::Stream::CmdCopyOp>(
+      barrierOp.getLoc(), sourceRange.resource, sourceRange.resourceSize,
+      sourceRange.offset, targetRange.resource, targetRange.resourceSize,
+      targetRange.offset, sourceRange.length);
+
+  barrierOp.erase();
+  return success();
+}
+
 static LogicalResult applyAsyncTransferOp(IREE::Stream::AsyncTransferOp asyncOp,
                                           AllocationScope &scope,
                                           OpBuilder builder) {
   // Lookup the affinity for where we are executing. This lets us determine if
   // this transfer is incoming or outgoing.
   auto isStaging = [](Value value) {
-    return value.getType().cast<IREE::Stream::ResourceType>().getLifetime() ==
-           IREE::Stream::Lifetime::Staging;
+    return llvm::cast<IREE::Stream::ResourceType>(value.getType())
+               .getLifetime() == IREE::Stream::Lifetime::Staging;
   };
-  auto currentAffinityAttr = IREE::Stream::AffinityAttr::lookup(asyncOp);
-  bool transferIn = asyncOp.getSourceAffinityAttr() != currentAffinityAttr ||
-                    isStaging(asyncOp.getSource());
-  bool transferOut = asyncOp.getResultAffinityAttr() != currentAffinityAttr ||
-                     isStaging(asyncOp.getResult());
+  auto currentAffinityAttr =
+      IREE::Stream::AffinityAttr::lookupOrDefault(asyncOp);
+  auto sourceAffinityAttr = asyncOp.getSourceAffinityAttr();
+  auto resultAffinityAttr = asyncOp.getResultAffinityAttr();
+  bool transferIn =
+      (sourceAffinityAttr && sourceAffinityAttr != currentAffinityAttr) ||
+      isStaging(asyncOp.getSource());
+  bool transferOut =
+      (resultAffinityAttr && resultAffinityAttr != currentAffinityAttr) ||
+      isStaging(asyncOp.getResult());
 
   auto sourceRange = scope.lookupResourceRange(asyncOp.getSource());
   auto targetRange = scope.lookupResourceRange(asyncOp.getResult());
@@ -645,7 +745,7 @@ static LogicalResult applyAsyncDispatchOp(IREE::Stream::AsyncDispatchOp asyncOp,
   unsigned resourceIndex = 0;
   for (auto it : llvm::enumerate(asyncOp.getResourceOperands())) {
     auto operand = it.value();
-    if (!operand.getType().isa<IREE::Stream::ResourceType>()) {
+    if (!llvm::isa<IREE::Stream::ResourceType>(operand.getType())) {
       // Primitive operand.
       newOperands.push_back(operand);
       continue;
@@ -693,10 +793,9 @@ static LogicalResult applyAsyncDispatchOp(IREE::Stream::AsyncDispatchOp asyncOp,
   }
 
   auto newOp = builder.create<IREE::Stream::CmdDispatchOp>(
-      asyncOp.getLoc(), asyncOp.getWorkload(),
-      builder.getArrayAttr({asyncOp.getEntryPoint()}), newOperands,
-      newResources, newResourceSizes, newResourceOffsets, newResourceLengths,
-      builder.getArrayAttr(newResourceAccesses));
+      asyncOp.getLoc(), asyncOp.getWorkload(), asyncOp.getEntryPointsAttr(),
+      newOperands, newResources, newResourceSizes, newResourceOffsets,
+      newResourceLengths, builder.getArrayAttr(newResourceAccesses));
   newOp->setDialectAttrs(asyncOp->getDialectAttrs());
   asyncOp.erase();
   return success();
@@ -713,12 +812,12 @@ static void convertAsyncFuncOp(IREE::Stream::AsyncFuncOp asyncOp) {
   SmallVector<DictionaryAttr> newArgAttrs;
   for (auto [i, oldInput] : llvm::enumerate(oldFunctionType.getInputs())) {
     auto oldArgAttr = asyncOp.getArgAttrDict(i);
-    if (oldInput.isa<IREE::Stream::ResourceType>()) {
-      newInputs.push_back(oldInput);  // resource
+    if (llvm::isa<IREE::Stream::ResourceType>(oldInput)) {
+      newInputs.push_back(oldInput); // resource
       newArgAttrs.push_back(oldArgAttr);
-      newInputs.push_back(indexType);  // offset
+      newInputs.push_back(indexType); // offset
       newArgAttrs.push_back(nullptr);
-      newInputs.push_back(indexType);  // length
+      newInputs.push_back(indexType); // length
       newArgAttrs.push_back(nullptr);
     } else {
       newInputs.push_back(oldInput);
@@ -730,16 +829,16 @@ static void convertAsyncFuncOp(IREE::Stream::AsyncFuncOp asyncOp) {
   SmallVector<DictionaryAttr> newResultAttrs;
   for (auto [i, oldResult] : llvm::enumerate(oldFunctionType.getResults())) {
     auto oldResultAttr = asyncOp.getResultAttrDict(i);
-    if (oldResult.isa<IREE::Stream::ResourceType>()) {
+    if (llvm::isa<IREE::Stream::ResourceType>(oldResult)) {
       if (asyncOp.isResultTied(i)) {
         // Tied results reuse the operands they are tied to.
         continue;
       }
-      newInputs.push_back(oldResult);  // resource
+      newInputs.push_back(oldResult); // resource
       newArgAttrs.push_back(oldResultAttr);
-      newInputs.push_back(indexType);  // offset
+      newInputs.push_back(indexType); // offset
       newArgAttrs.push_back(nullptr);
-      newInputs.push_back(indexType);  // length
+      newInputs.push_back(indexType); // length
       newArgAttrs.push_back(nullptr);
     } else {
       newResults.push_back(oldResult);
@@ -770,7 +869,7 @@ static LogicalResult applyAsyncCallOp(IREE::Stream::AsyncCallOp asyncOp,
 
   unsigned resourceIndex = 0;
   for (auto [i, operand] : llvm::enumerate(asyncOp.getResourceOperands())) {
-    if (!operand.getType().isa<IREE::Stream::ResourceType>()) {
+    if (!llvm::isa<IREE::Stream::ResourceType>(operand.getType())) {
       // Primitive operand.
       newResourceOperands.push_back(operand);
       continue;
@@ -799,7 +898,7 @@ static LogicalResult applyAsyncCallOp(IREE::Stream::AsyncCallOp asyncOp,
   }
 
   for (auto result : asyncOp.getResults()) {
-    if (!result.getType().isa<IREE::Stream::ResourceType>()) {
+    if (!llvm::isa<IREE::Stream::ResourceType>(result.getType())) {
       // Primitive result.
       newResultTypes.push_back(result.getType());
       continue;
@@ -828,7 +927,8 @@ static LogicalResult applyAsyncCallOp(IREE::Stream::AsyncCallOp asyncOp,
       newResourceOperands, newResourceSizes, newResourceOffsets,
       newResourceLengths,
       /*result_sizes=*/ValueRange{},
-      /*tied_operands=*/nullptr, builder.getArrayAttr(newResourceAccesses));
+      /*tied_operands=*/nullptr, asyncOp.getArgAttrsAttr(),
+      asyncOp.getResAttrsAttr(), builder.getArrayAttr(newResourceAccesses));
   newOp->setDialectAttrs(asyncOp->getDialectAttrs());
   asyncOp.erase();
   return success();
@@ -837,9 +937,9 @@ static LogicalResult applyAsyncCallOp(IREE::Stream::AsyncCallOp asyncOp,
 static LogicalResult applyAsyncAllocations(Region &region,
                                            AllocationScope &scope);
 
-static LogicalResult applyAsyncConcurrentOp(
-    IREE::Stream::AsyncConcurrentOp asyncOp, AllocationScope &scope,
-    OpBuilder builder) {
+static LogicalResult
+applyAsyncConcurrentOp(IREE::Stream::AsyncConcurrentOp asyncOp,
+                       AllocationScope &scope, OpBuilder builder) {
   // Remove operands from the yield now that we aren't returning anything.
   // Must do this before we recurse so that the ops we are transforming have no
   // uses.
@@ -874,10 +974,11 @@ static LogicalResult applyAsyncAllocations(Region &region,
   // Walk the ops backwards so that we can delete them, freeing uses so that
   // producers can be deleted in turn.
   auto &block = region.getBlocks().front();
-  auto ops = llvm::to_vector<4>(llvm::map_range(
-      llvm::reverse(block), [&](Operation &op) { return &op; }));
+  auto ops = llvm::map_to_vector(llvm::reverse(block),
+                                 [&](Operation &op) { return &op; });
   for (auto *op : ops) {
-    if (op->hasTrait<OpTrait::IsTerminator>()) continue;
+    if (op->hasTrait<OpTrait::IsTerminator>())
+      continue;
     if (failed(TypeSwitch<Operation *, LogicalResult>(op)
                    .Case([&](IREE::Stream::ResourceSubviewOp op) {
                      return applyResourceSubviewOp(op, scope, OpBuilder(op));
@@ -908,6 +1009,9 @@ static LogicalResult applyAsyncAllocations(Region &region,
                    })
                    .Case([&](IREE::Stream::AsyncCollectiveOp op) {
                      return applyAsyncCollectiveOp(op, scope, OpBuilder(op));
+                   })
+                   .Case([&](IREE::Stream::AsyncBarrierOp op) {
+                     return applyAsyncBarrierOp(op, scope, OpBuilder(op));
                    })
                    .Case([&](IREE::Stream::AsyncTransferOp op) {
                      return applyAsyncTransferOp(op, scope, OpBuilder(op));
@@ -949,9 +1053,9 @@ struct TransientAllocation {
 // Performs allocation for all local transients in the execution region (those
 // !stream.resource<transient> values that don't escape). A new allocation op
 // will be inserted using |externalBuilder| and mappings added to |scope|.
-static std::optional<TransientAllocation> allocateLocalTransients(
-    IREE::Stream::AsyncExecuteOp executeOp, AllocationScope &scope,
-    OpBuilder &externalBuilder) {
+static std::optional<TransientAllocation>
+allocateLocalTransients(IREE::Stream::AsyncExecuteOp executeOp,
+                        AllocationScope &scope, OpBuilder &externalBuilder) {
   // Track which values we've already reserved. This makes it easier to early-
   // exit on aliased values.
   SmallPtrSet<Value, 16> coveredValues;
@@ -966,8 +1070,10 @@ static std::optional<TransientAllocation> allocateLocalTransients(
   for (auto valueInterval : livenessIntervals) {
     auto value = valueInterval.value;
     assert(value && "must have value for interval");
-    auto valueType = value.getType().dyn_cast<IREE::Stream::ResourceType>();
-    if (!valueType) continue;
+    auto valueType =
+        llvm::dyn_cast<IREE::Stream::ResourceType>(value.getType());
+    if (!valueType)
+      continue;
 
     // Only handle transient buffers (created/used/dropped within the stream).
     if (valueInterval.start == LIVE_IN || valueInterval.end == LIVE_OUT) {
@@ -1057,20 +1163,28 @@ struct ConstantAllocation {
 // Returns true if |value| has one use and it is a stream.yield op.
 static bool isOnlyUseYield(Value value) {
   for (auto *user : value.getUsers()) {
-    if (!isa<IREE::Stream::YieldOp>(user)) return false;
+    if (!isa<IREE::Stream::YieldOp>(user))
+      return false;
   }
   return true;
 }
 
-// Extracts stream.async.constant ops from |executeOp| into their own dedicated
-// stream.resource.constants upload op. The uploaded constants will be captured
-// by the region for use within as if they had still existed in there.
-static std::optional<ConstantAllocation> extractConstants(
-    IREE::Stream::AsyncExecuteOp executeOp, OpBuilder &externalBuilder) {
-  // Gather all constant ops from the region, if any.
-  auto constantOps =
-      llvm::to_vector<4>(executeOp.getOps<IREE::Stream::AsyncConstantOp>());
-  if (constantOps.empty()) return std::nullopt;
+// Extracts stream.async.constant ops with the given lifetime from |executeOp|
+// into their own dedicated stream.resource.constants upload op. The uploaded
+// constants will be captured by the region for use within as if they had still
+// existed in there.
+static std::optional<ConstantAllocation>
+extractConstantsWithLifetime(IREE::Stream::AsyncExecuteOp executeOp,
+                             IREE::Stream::Lifetime lifetime,
+                             OpBuilder &externalBuilder) {
+  auto constantOps = llvm::filter_to_vector(
+      executeOp.getOps<IREE::Stream::AsyncConstantOp>(),
+      [&](IREE::Stream::AsyncConstantOp op) {
+        return cast<IREE::Stream::ResourceType>(op.getResult().getType())
+                   .getLifetime() == lifetime;
+      });
+  if (constantOps.empty())
+    return {};
 
   // Allocate a new constant upload op and insert a subview for each constant.
   SmallVector<Location> locs;
@@ -1114,7 +1228,27 @@ static std::optional<ConstantAllocation> extractConstants(
 
     allocation.reservations.push_back(reservation);
   }
+
   return allocation;
+}
+
+// Extracts stream.async.constant ops from |executeOp| into their own dedicated
+// stream.resource.constants upload ops per lifetime. The uploaded constants
+// will be captured by the region for use within as if they had still existed in
+// there.
+static SmallVector<ConstantAllocation>
+extractConstants(IREE::Stream::AsyncExecuteOp executeOp,
+                 OpBuilder &externalBuilder) {
+  SmallVector<ConstantAllocation> allocations;
+  if (auto allocation = extractConstantsWithLifetime(
+          executeOp, IREE::Stream::Lifetime::Constant, externalBuilder)) {
+    allocations.push_back(std::move(allocation).value());
+  }
+  if (auto allocation = extractConstantsWithLifetime(
+          executeOp, IREE::Stream::Lifetime::Variable, externalBuilder)) {
+    allocations.push_back(std::move(allocation).value());
+  }
+  return allocations;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1145,35 +1279,47 @@ struct ResultReservationSet {
 };
 
 struct ResultAllocation {
+  // Affinity for the allocations.
+  IREE::Stream::AffinityAttr affinityAttr;
   // Reservations bucketed by lifetime.
   SmallVector<ResultReservationSet> reservationSets;
 };
 
-// Produces parameters for one or more result allocations composed of an ordered
-// set of |reservations| with matching lifetimes.
-static ResultAllocation reserveResultAllocation(
-    ArrayRef<ResultReservation> reservations) {
-  // We want deterministic ordering of the allocations for each lifetime type
-  // so we build them all here and then just nuke the ones we don't end up
-  // using.
-  SmallVector<ResultReservationSet> sets(
-      IREE::Stream::getMaxEnumValForLifetime() + 1);
-  for (auto &reservation : reservations) {
-    auto &set =
-        sets[static_cast<unsigned>(reservation.resultType.getLifetime())];
-    set.reservationLocs.push_back(reservation.loc);
-    set.reservationTypes.push_back(reservation.resultType);
-    set.reservationSizes.push_back(reservation.resultSize);
-    set.reservations.push_back(std::move(reservation));
-  }
+// A map of allocation placement affinities to the alloc reservations requested.
+using ResultAllocationMap =
+    llvm::MapVector<IREE::Stream::AffinityAttr, SmallVector<ResultReservation>>;
 
-  // Remove unused sets. This does a bunch of moves and is really bad but eh.
-  for (int i = sets.size() - 1; i >= 0; --i) {
-    if (sets[i].reservations.empty()) {
-      sets.erase(sets.begin() + i);
+// Produces parameters for one or more result allocations composed of an ordered
+// set of |reservations| with matching lifetimes. Allocations will be bucketed
+// both by their allocation affinity (where they should be placed) and their
+// lifetime (how long they're expected to live).
+static std::vector<ResultAllocation>
+reserveResultAllocations(ResultAllocationMap &reservationMap) {
+  std::vector<ResultAllocation> result;
+  for (auto &[affinityAttr, reservations] : reservationMap) {
+    // We want deterministic ordering of the allocations for each lifetime type
+    // so we build them all here and then just nuke the ones we don't end up
+    // using.
+    SmallVector<ResultReservationSet> sets(
+        IREE::Stream::getMaxEnumValForLifetime() + 1);
+    for (auto &reservation : reservations) {
+      auto &set =
+          sets[static_cast<unsigned>(reservation.resultType.getLifetime())];
+      set.reservationLocs.push_back(reservation.loc);
+      set.reservationTypes.push_back(reservation.resultType);
+      set.reservationSizes.push_back(reservation.resultSize);
+      set.reservations.push_back(std::move(reservation));
     }
+
+    // Remove unused sets. This does a bunch of moves and is really bad but eh.
+    for (int i = sets.size() - 1; i >= 0; --i) {
+      if (sets[i].reservations.empty()) {
+        sets.erase(sets.begin() + i);
+      }
+    }
+    result.push_back(ResultAllocation{affinityAttr, sets});
   }
-  return ResultAllocation{sets};
+  return result;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1186,7 +1332,7 @@ static Value findTiedYieldResult(Value seedValue) {
   auto regionOp =
       cast<RegionBranchOpInterface>(seedValue.getParentRegion()->getParentOp());
   SmallVector<RegionSuccessor> regions;
-  regionOp.getSuccessorRegions(0, regions);
+  regionOp.getSuccessorRegions(regionOp->getRegion(0), regions);
   auto results = regions.front().getSuccessorInputs();
   SmallVector<Value> worklist;
   worklist.push_back(seedValue);
@@ -1204,6 +1350,117 @@ static Value findTiedYieldResult(Value seedValue) {
   return {};
 }
 
+// Walks up the use-def chain to find an affinity the given local value is
+// pinned to. May return nullptr if there's no assigned affinity and the
+// enclosing execution region affinity should be used.
+//
+// TODO(benvanik): change this to use an affinity analysis on the escaping
+// value instead. The local value may not have a transfer associated with it.
+static IREE::Stream::AffinityAttr findLocalValueAffinity(Value value) {
+  while (value) {
+    auto definingOp = value.getDefiningOp();
+    if (!definingOp) {
+      // Block argument or something we don't track locally.
+      return {};
+    } else if (auto transferOp =
+                   dyn_cast<IREE::Stream::AsyncTransferOp>(definingOp)) {
+      return transferOp.getResultAffinityAttr();
+    } else if (auto regionOp = dyn_cast<RegionBranchOpInterface>(definingOp)) {
+      // A region op with a yielded value (like stream.async.concurrent).
+      // Note that we always want to check for tied ops first as that will let
+      // us skip over the region entirely.
+      if (auto tiedOp = dyn_cast<IREE::Util::TiedOpInterface>(definingOp)) {
+        if (auto tiedValue = tiedOp.getTiedResultOperand(value)) {
+          value = tiedValue;
+          continue;
+        }
+      }
+      unsigned resultIndex = cast<OpResult>(value).getResultNumber();
+      auto &block = regionOp.getOperation()->getRegion(0).front();
+      auto terminatorOp =
+          cast<RegionBranchTerminatorOpInterface>(block.getTerminator());
+      value = terminatorOp.getSuccessorOperands(
+          RegionBranchPoint::parent())[resultIndex];
+    } else if (auto tiedOp =
+                   dyn_cast<IREE::Util::TiedOpInterface>(definingOp)) {
+      // If the producer is tied then try to get the operand.
+      value = tiedOp.getTiedResultOperand(value);
+    } else {
+      // Analysis blocked.
+      break;
+    }
+  }
+  return {};
+}
+
+// Returns a reversed list of subrange operations that lead from an initial
+// resource down a sequence to |derivedValue|. The first element in the list
+// will be the last subview of |derivedValue| and the last element will be the
+// first subview.
+static SmallVector<IREE::Util::SubrangeOperand>
+gatherSubranges(Value derivedValue) {
+  SmallVector<IREE::Util::SubrangeOperand> subrangeStack;
+  Value baseValue = derivedValue;
+  while (auto definingOp = dyn_cast_or_null<IREE::Util::TiedOpInterface>(
+             baseValue.getDefiningOp())) {
+    auto tiedValue = definingOp.getTiedResultOperand(baseValue);
+    if (!tiedValue)
+      break;
+    if (auto subrangeOp = dyn_cast<IREE::Util::SubrangeOpInterface>(
+            definingOp.getOperation())) {
+      if (subrangeOp.getSubrangeResource() == tiedValue) {
+        subrangeStack.push_back(IREE::Util::SubrangeOperand{
+            subrangeOp.getSubrangeResource(),
+            subrangeOp.getSubrangeResourceSize(),
+            subrangeOp.getSubrangeOffset(), subrangeOp.getSubrangeLength()});
+      }
+    }
+    baseValue = tiedValue;
+  }
+  return subrangeStack;
+}
+
+// Returns a resource range for |resultValue| mapping to the base resource.
+//
+// Example:
+//   %0 = resource
+//   %1 = subview %0[%a for %a_length]
+//   %2 = subview %0[%b for %b_length]
+//   return %3 <- result
+// -> range(%0[(%a + %b) for %b_length])
+static ResourceRange deriveResourceRangeFromResult(Value resultValue,
+                                                   Value resultSize,
+                                                   OpBuilder &builder) {
+  auto subranges = gatherSubranges(resultValue);
+  if (subranges.empty())
+    return ResourceRange(resultValue, resultSize);
+
+  // TODO(benvanik): switch to affine.apply when fully supported.
+  Value offset;
+  for (auto subrange : llvm::reverse(subranges)) {
+    if (offset) {
+      offset = builder.createOrFold<arith::AddIOp>(resultValue.getLoc(), offset,
+                                                   subrange.offset);
+    } else {
+      offset = subrange.offset;
+    }
+  }
+
+  return ResourceRange(subranges.back().resource, subranges.back().resourceSize,
+                       offset, resultSize);
+}
+
+// Returns true if |op| is guaranteed to only be executed once in the program.
+// This naively checks that the op is in the entry block of an initializer. If
+// we really wanted to do this analysis we should do it in a dedicated pass that
+// checks the whole call graph in order to detect if the op is in a function
+// called from an initializer or in a conditional.
+static bool isExecutedOnce(Operation *op) {
+  auto parentOp =
+      dyn_cast<IREE::Util::InitializerOpInterface>(op->getParentOp());
+  return parentOp && op->getBlock() == &parentOp.getInitializerRegion().front();
+}
+
 // TODO(benvanik): find a way to split this up. We could probably do this in
 // several passes each time pulling out different resource types, however the
 // analysis we perform needs to see the original form and getting a shared
@@ -1214,8 +1471,8 @@ static Value findTiedYieldResult(Value seedValue) {
 
 // Performs allocation for all results and local region transients of the given
 // |executeOp| region. IR will be inserted around the op in its parent block.
-static LogicalResult allocateExecutionRegion(
-    IREE::Stream::AsyncExecuteOp executeOp) {
+static LogicalResult
+allocateExecutionRegion(IREE::Stream::AsyncExecuteOp executeOp) {
   LLVM_DEBUG(llvm::dbgs() << "[[ Allocating execution region ]]\n");
 
   AllocationScope scope(executeOp);
@@ -1250,10 +1507,10 @@ static LogicalResult allocateExecutionRegion(
   // op. We'll then capture the result and use that to initialize variables and
   // constants within the region. Note that this removes ops from the region and
   // as such we want to run it first before we go allocate transients.
-  auto constantAllocation = extractConstants(executeOp, externalBuilder);
-  if (constantAllocation.has_value()) {
+  auto constantAllocations = extractConstants(executeOp, externalBuilder);
+  for (auto &constantAllocation : constantAllocations) {
     bool anyCaptured = false;
-    for (auto &reservation : constantAllocation->reservations) {
+    for (auto &reservation : constantAllocation.reservations) {
       if (reservation.capturedArg) {
         newOperands.push_back(reservation.resource);
         newOperandSizes.push_back(reservation.resourceSize);
@@ -1274,7 +1531,7 @@ static LogicalResult allocateExecutionRegion(
       });
     }
 
-    auto awaitTimepoint = constantAllocation->constantsOp.getResultTimepoint();
+    auto awaitTimepoint = constantAllocation.constantsOp.getResultTimepoint();
     if (anyCaptured) {
       // The execute region must depend on the constant upload as one or more
       // constants are used. All this code could be much more clever about
@@ -1287,7 +1544,7 @@ static LogicalResult allocateExecutionRegion(
         awaitTimepoint.printAsOperand(llvm::dbgs(), *asmState);
         llvm::dbgs() << "\n";
       });
-      for (auto &reservation : constantAllocation->reservations) {
+      for (auto &reservation : constantAllocation.reservations) {
         auto resourceRange =
             ResourceRange(reservation.capturedArg, reservation.resourceSize);
         scope.mapResourceRange(reservation.constantOp, resourceRange,
@@ -1307,9 +1564,10 @@ static LogicalResult allocateExecutionRegion(
     }
 
     // Replace results of escaping uploads with the upload values.
-    for (auto &reservation : constantAllocation->reservations) {
+    for (auto &reservation : constantAllocation.reservations) {
       auto result = findTiedYieldResult(reservation.constantOp.getResult());
-      if (!result) continue;
+      if (!result)
+        continue;
       result.replaceAllUsesWith(reservation.resource);
       handledResults.insert(result);
       LLVM_DEBUG({
@@ -1321,8 +1579,6 @@ static LogicalResult allocateExecutionRegion(
         llvm::dbgs() << "\n";
       });
     }
-  } else {
-    LLVM_DEBUG(llvm::dbgs() << "  - no constants found\n");
   }
 
   // Compute an updated set of operands/results. After allocation all results
@@ -1345,10 +1601,10 @@ static LogicalResult allocateExecutionRegion(
     auto resourceRange = ResourceRange(arg, operandSize);
     scope.mapResourceRange(arg, resourceRange, asmState.get());
   }
-  SmallVector<ResultReservation> resultReservations;
+  ResultAllocationMap resultReservations;
   for (auto [result, resultSize] :
        llvm::zip_equal(executeOp.getResults(), executeOp.getResultSizes())) {
-    auto resultType = result.getType().cast<IREE::Stream::ResourceType>();
+    auto resultType = llvm::cast<IREE::Stream::ResourceType>(result.getType());
     if (handledResults.contains(result)) {
       resultReplacements.push_back(std::make_pair(result, Value{}));
       continue;
@@ -1363,8 +1619,8 @@ static LogicalResult allocateExecutionRegion(
     if (tiedOperandIndex.has_value()) {
       // Already tied; no need to modify just map.
       auto tiedOperand = executeOp.getOperand(tiedOperandIndex.value());
-      auto arg = entryBlock.getArgument(tiedOperandIndex.value());
       LLVM_DEBUG({
+        auto arg = entryBlock.getArgument(tiedOperandIndex.value());
         AsmState asmState(executeOp->getParentOp());
         llvm::dbgs() << "  - tying operand ";
         tiedOperand.printAsOperand(llvm::dbgs(), asmState);
@@ -1373,10 +1629,35 @@ static LogicalResult allocateExecutionRegion(
         llvm::dbgs() << " = ";
         result.printAsOperand(llvm::dbgs(), asmState);
         llvm::dbgs() << "\n";
+        auto subrangeStack = gatherSubranges(yieldValue);
+        if (!subrangeStack.empty()) {
+          llvm::dbgs() << "    -> subranges:\n";
+          for (auto subrange : llvm::reverse(subrangeStack)) {
+            llvm::dbgs() << "       ";
+            subrange.resource.printAsOperand(llvm::dbgs(), asmState);
+            llvm::dbgs() << "{";
+            subrange.resourceSize.printAsOperand(llvm::dbgs(), asmState);
+            llvm::dbgs() << "}[";
+            subrange.offset.printAsOperand(llvm::dbgs(), asmState);
+            llvm::dbgs() << " for ";
+            subrange.length.printAsOperand(llvm::dbgs(), asmState);
+            llvm::dbgs() << "]\n";
+          }
+        }
       });
-      scope.mapResourceRange(yieldValue, ResourceRange(arg, resultSize),
-                             asmState.get());
-      resultReplacements.push_back(std::make_pair(result, tiedOperand));
+      auto resourceRange = deriveResourceRangeFromResult(yieldValue, resultSize,
+                                                         externalBuilder);
+      scope.mapResourceRange(yieldValue, resourceRange, asmState.get());
+      if (resourceRange.offset) {
+        auto resultSubviewOp =
+            externalBuilder.create<IREE::Stream::ResourceSubviewOp>(
+                yieldValue.getLoc(), tiedOperand, resourceRange.resourceSize,
+                resourceRange.offset, resourceRange.length);
+        resultReplacements.push_back(
+            std::make_pair(result, resultSubviewOp.getResult()));
+      } else {
+        resultReplacements.push_back(std::make_pair(result, tiedOperand));
+      }
       continue;
     }
 
@@ -1386,7 +1667,7 @@ static LogicalResult allocateExecutionRegion(
     if (!definingOp) {
       // Directly returning an operand; this usually gets canonicalized away but
       // may be introduced by intermediate transformations.
-      auto arg = definingValue.cast<BlockArgument>();
+      auto arg = llvm::cast<BlockArgument>(definingValue);
       auto operand = newOperands[arg.getArgNumber()];
       LLVM_DEBUG({
         AsmState asmState(executeOp->getParentOp());
@@ -1402,6 +1683,13 @@ static LogicalResult allocateExecutionRegion(
       continue;
     }
 
+    // Find a pinned affinity for the value or inherit the execution region
+    // affinity.
+    auto allocationAffinity = findLocalValueAffinity(yieldValue);
+    if (!allocationAffinity) {
+      allocationAffinity = executeOp.getAffinityAttr();
+    }
+
     // Queue up the allocation for packing.
     ResultReservation resultReservation = {
         definingOp->getLoc(), result, resultType, resultSize, yieldValue,
@@ -1412,54 +1700,56 @@ static LogicalResult allocateExecutionRegion(
       resultReservation.result.printAsOperand(llvm::dbgs(), asmState);
       llvm::dbgs() << "\n";
     });
-    resultReservations.push_back(resultReservation);
+    resultReservations[allocationAffinity].push_back(resultReservation);
   }
-  auto resultAllocation = reserveResultAllocation(resultReservations);
-  for (auto &reservationSet : resultAllocation.reservationSets) {
-    // Allocate and tie an operand to the result.
-    // TODO(benvanik): change this to an alloca. We may need a higher-level
-    // analysis to decide when to deallocate, or just leave it to be deallocated
-    // as part of garbage collection.
-    auto allocOp = externalBuilder.create<IREE::Stream::ResourceAllocOp>(
-        externalBuilder.getFusedLoc(reservationSet.reservationLocs),
-        reservationSet.reservationTypes, reservationSet.reservationSizes,
-        /*uninitialized=*/externalBuilder.getUnitAttr(),
-        executeOp.getAffinityAttr());
+  for (auto &resultAllocation : reserveResultAllocations(resultReservations)) {
+    for (auto &reservationSet : resultAllocation.reservationSets) {
+      // Allocate and tie an operand to the result.
+      auto timepointType =
+          externalBuilder.getType<IREE::Stream::TimepointType>();
+      auto [allocaOp, suballocations] =
+          IREE::Stream::ResourceAllocaOp::createSuballocations(
+              timepointType, reservationSet.reservationTypes.front(),
+              reservationSet.reservationLocs, reservationSet.reservationSizes,
+              executeOp.getAwaitTimepoint(), resultAllocation.affinityAttr,
+              externalBuilder);
+      newAwaitTimepoints.push_back(allocaOp.getResultTimepoint());
 
-    auto asmState = getRootAsmState(executeOp->getParentOp());
-    LLVM_DEBUG({
-      llvm::dbgs() << "  + alloc for result reservation set: ";
-      allocOp.print(llvm::dbgs(), *asmState);
-      llvm::dbgs() << ":\n";
-    });
-
-    for (auto [reservation, allocResult] :
-         llvm::zip_equal(reservationSet.reservations, allocOp.getResults())) {
-      newOperands.push_back(allocResult);
-      newOperandSizes.push_back(reservation.resultSize);
-      resultReplacements.push_back(
-          std::make_pair(reservation.result, allocResult));
-
-      // Insert entry arg for the new operand tied all the way to the yield.
-      auto arg =
-          entryBlock.addArgument(reservation.resultType, reservation.loc);
-
+      auto asmState = getRootAsmState(executeOp->getParentOp());
       LLVM_DEBUG({
-        llvm::dbgs() << "    + adding entry arg for reservation ";
-        reservation.result.printAsOperand(llvm::dbgs(), *asmState);
-        llvm::dbgs() << "{";
-        reservation.resultSize.printAsOperand(llvm::dbgs(), *asmState);
-        llvm::dbgs() << "} from ";
-        reservation.yieldValue.printAsOperand(llvm::dbgs(), *asmState);
-        llvm::dbgs() << " as ";
-        arg.printAsOperand(llvm::dbgs(), *asmState);
-        llvm::dbgs() << "\n";
+        llvm::dbgs() << "  + alloc for result reservation set: ";
+        allocaOp.print(llvm::dbgs(), *asmState);
+        llvm::dbgs() << ":\n";
       });
 
-      // Map into scope, updating all aliases.
-      auto resourceRange = ResourceRange(arg, reservation.resultSize);
-      scope.mapResourceRange(reservation.yieldValue, resourceRange,
-                             asmState.get());
+      for (auto [reservation, suballocation] :
+           llvm::zip_equal(reservationSet.reservations, suballocations)) {
+        newOperands.push_back(suballocation);
+        newOperandSizes.push_back(reservation.resultSize);
+        resultReplacements.push_back(
+            std::make_pair(reservation.result, suballocation));
+
+        // Insert entry arg for the new operand tied all the way to the yield.
+        auto arg =
+            entryBlock.addArgument(reservation.resultType, reservation.loc);
+
+        LLVM_DEBUG({
+          llvm::dbgs() << "    + adding entry arg for reservation ";
+          reservation.result.printAsOperand(llvm::dbgs(), *asmState);
+          llvm::dbgs() << "{";
+          reservation.resultSize.printAsOperand(llvm::dbgs(), *asmState);
+          llvm::dbgs() << "} from ";
+          reservation.yieldValue.printAsOperand(llvm::dbgs(), *asmState);
+          llvm::dbgs() << " as ";
+          arg.printAsOperand(llvm::dbgs(), *asmState);
+          llvm::dbgs() << "\n";
+        });
+
+        // Map into scope, updating all aliases.
+        auto resourceRange = ResourceRange(arg, reservation.resultSize);
+        scope.mapResourceRange(reservation.yieldValue, resourceRange,
+                               asmState.get());
+      }
     }
   }
 
@@ -1498,16 +1788,15 @@ static LogicalResult allocateExecutionRegion(
   if (newAwaitTimepoints.size() == 1) {
     newAwaitTimepoint = newAwaitTimepoints.front();
   } else if (newAwaitTimepoints.size() > 1) {
-    newAwaitTimepoint =
-        executeBuilder.createOrFold<IREE::Stream::TimepointJoinOp>(
-            executeOp.getLoc(), newAwaitTimepoints.front().getType(),
-            newAwaitTimepoints);
+    newAwaitTimepoint = IREE::Stream::TimepointJoinOp::join(
+        executeOp.getLoc(), newAwaitTimepoints, executeBuilder);
   }
 
   // Recreate the execution op with all the new arguments. Note that we drop
   // the results (besides the timepoint) as they are all aliased.
   auto newExecuteOp = executeBuilder.create<IREE::Stream::CmdExecuteOp>(
       executeOp.getLoc(), newAwaitTimepoint, newOperands, newOperandSizes);
+  newExecuteOp.setOnce(isExecutedOnce(executeOp));
   if (executeOp.getAffinity().has_value()) {
     newExecuteOp.setAffinityAttr(executeOp.getAffinityAttr());
   }
@@ -1515,7 +1804,16 @@ static LogicalResult allocateExecutionRegion(
   executeOp.getResultTimepoint().replaceAllUsesWith(
       newExecuteOp.getResultTimepoint());
   for (auto replacement : resultReplacements) {
-    if (!replacement.second) continue;  // handled already
+    if (!replacement.second)
+      continue; // handled already
+    LLVM_DEBUG({
+      AsmState asmState(newExecuteOp->getParentOp());
+      llvm::dbgs() << "  == replacing region result ";
+      replacement.first.printAsOperand(llvm::dbgs(), asmState);
+      llvm::dbgs() << " -> ";
+      replacement.second.printAsOperand(llvm::dbgs(), asmState);
+      llvm::dbgs() << "\n";
+    });
     replacement.first.replaceAllUsesWith(replacement.second);
   }
   scope.replaceRootOp(newExecuteOp);
@@ -1594,8 +1892,8 @@ static LogicalResult allocateExecutionRegion(
   // local changes here.
   if (!joinTimepoints.empty()) {
     joinTimepoints.push_back(newExecuteOp.getResultTimepoint());
-    auto fusedLoc = builder.getFusedLoc(llvm::to_vector<4>(llvm::map_range(
-        joinTimepoints, [](auto timepoint) { return timepoint.getLoc(); })));
+    auto fusedLoc = builder.getFusedLoc(llvm::map_to_vector(
+        joinTimepoints, [](auto timepoint) { return timepoint.getLoc(); }));
     auto joinOp = builder.create<IREE::Stream::TimepointJoinOp>(
         fusedLoc, newExecuteOp.getResultTimepoint().getType(), joinTimepoints);
     executeTimepointUsers.insert(joinOp);
@@ -1627,19 +1925,12 @@ static LogicalResult convertAsyncStoreOp(IREE::Stream::AsyncStoreOp asyncOp) {
 }
 
 //===----------------------------------------------------------------------===//
-// -iree-stream-schedule-allocation
+// --iree-stream-schedule-allocation
 //===----------------------------------------------------------------------===//
 
-class ScheduleAllocationPass
-    : public ScheduleAllocationBase<ScheduleAllocationPass> {
- public:
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<mlir::func::FuncDialect>();
-    registry.insert<mlir::arith::ArithDialect>();
-    registry.insert<IREE::Stream::StreamDialect>();
-    registry.insert<IREE::Util::UtilDialect>();
-  }
-
+struct ScheduleAllocationPass
+    : public IREE::Stream::impl::ScheduleAllocationPassBase<
+          ScheduleAllocationPass> {
   void runOnOperation() override {
     auto moduleOp = getOperation();
     for (auto &parentOp : llvm::make_early_inc_range(moduleOp.getOps())) {
@@ -1652,9 +1943,12 @@ class ScheduleAllocationPass
           callableOp.getCallableRegion()->empty()) {
         continue;
       }
-      for (auto &op : llvm::make_early_inc_range(
-               callableOp.getCallableRegion()->getOps())) {
-        if (failed(TypeSwitch<Operation *, LogicalResult>(&op)
+
+      llvm::SmallVector<Operation *> operations;
+      callableOp.walk([&](Operation *op) { operations.push_back(op); });
+
+      for (auto op : operations) {
+        if (failed(TypeSwitch<Operation *, LogicalResult>(op)
                        .Case([&](IREE::Stream::AsyncExecuteOp op) {
                          return allocateExecutionRegion(op);
                        })
@@ -1672,13 +1966,6 @@ class ScheduleAllocationPass
   }
 };
 
-}  // namespace
+} // namespace
 
-std::unique_ptr<OperationPass<mlir::ModuleOp>> createScheduleAllocationPass() {
-  return std::make_unique<ScheduleAllocationPass>();
-}
-
-}  // namespace Stream
-}  // namespace IREE
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler::IREE::Stream
