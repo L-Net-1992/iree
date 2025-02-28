@@ -18,20 +18,23 @@ iree_cc_library(
     "Passes.h.inc"
     "Patterns.h"
   SRCS
+    "AnnotateOpOrdinals.cpp"
     "ApplyPatterns.cpp"
     "CombineInitializers.cpp"
-    "ConvertPrimitiveType.cpp"
     "DropCompilerHints.cpp"
+    "DumpModule.cpp"
     "FixedPointIterator.cpp"
     "FoldGlobals.cpp"
     "FuseGlobals.cpp"
     "HoistIntoGlobals.cpp"
     "IPO.cpp"
-    "PassDetail.h"
+    "ImportResources.cpp"
+    "OptimizeIntArithmetic.cpp"
     "Passes.cpp"
     "Patterns.cpp"
     "PropagateSubranges.cpp"
     "SimplifyGlobalAccesses.cpp"
+    "StripAndSplatConstants.cpp"
     "StripDebugOps.cpp"
     "TestConversion.cpp"
     "TestFloatRangeAnalysis.cpp"
@@ -39,11 +42,15 @@ iree_cc_library(
     ::PassesIncGen
     LLVMSupport
     MLIRAffineDialect
+    MLIRAffineTransforms
+    MLIRAffineUtils
     MLIRAnalysis
     MLIRArithDialect
     MLIRArithTransforms
+    MLIRBytecodeWriter
     MLIRControlFlowDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRLinalgDialect
     MLIRMathDialect
@@ -51,7 +58,10 @@ iree_cc_library(
     MLIRPass
     MLIRSCFDialect
     MLIRSupport
+    MLIRTransformUtils
     MLIRTransforms
+    MLIRVectorDialect
+    iree::compiler::Dialect::Encoding::IR
     iree::compiler::Dialect::Util::Analysis
     iree::compiler::Dialect::Util::Analysis::Attributes
     iree::compiler::Dialect::Util::Analysis::Constant

@@ -48,14 +48,14 @@ static Status SyncSimulatedHostOpI32(iree_hal_buffer_t* source_buffer,
   if (status.ok()) {
     status = iree_hal_buffer_map_range(
         source_buffer, IREE_HAL_MAPPING_MODE_SCOPED,
-        IREE_HAL_MEMORY_ACCESS_READ, 0, IREE_WHOLE_BUFFER, &source_mapping);
+        IREE_HAL_MEMORY_ACCESS_READ, 0, IREE_HAL_WHOLE_BUFFER, &source_mapping);
   }
   iree_hal_buffer_mapping_t target_mapping = {{0}};
   if (status.ok()) {
     status =
         iree_hal_buffer_map_range(target_buffer, IREE_HAL_MAPPING_MODE_SCOPED,
                                   IREE_HAL_MEMORY_ACCESS_DISCARD_WRITE, 0,
-                                  IREE_WHOLE_BUFFER, &target_mapping);
+                                  IREE_HAL_WHOLE_BUFFER, &target_mapping);
   }
 
   // Sad slow host work. Whenever possible it's worth it to move these into the
@@ -118,8 +118,7 @@ class CustomModuleState final {
     vm::ref<iree_hal_buffer_t> result_buffer;
     IREE_RETURN_IF_ERROR(iree_hal_allocator_allocate_buffer(
         device_allocator, buffer_params,
-        iree_hal_buffer_view_byte_length(arg_view.get()),
-        iree_const_byte_span_empty(), &result_buffer));
+        iree_hal_buffer_view_byte_length(arg_view.get()), &result_buffer));
 
     // Hacky example accessing the source contents and producing the result
     // contents. This emulates what an external library the user is calling that
@@ -170,6 +169,16 @@ class CustomModule final : public vm::NativeModule<CustomModuleState> {
     auto state = std::make_unique<CustomModuleState>(vm::retain_ref(device_),
                                                      host_allocator);
     return state;
+  }
+
+  // Forks a parent state into a child state, preserving any module state
+  // by-reference.
+  StatusOr<std::unique_ptr<CustomModuleState>> ForkState(
+      CustomModuleState* parent_state,
+      iree_allocator_t host_allocator) override {
+    // No special state to preserve; the device is always the same and derived
+    // from the module.
+    return CreateState(host_allocator);
   }
 
  private:

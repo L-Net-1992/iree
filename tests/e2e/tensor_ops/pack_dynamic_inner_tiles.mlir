@@ -19,7 +19,7 @@ func.func private @generate_2D_source(%height : index, %width : index) -> tensor
 }
 
 func.func @fully_dynamic_pack_simple() {
-  %iree_input = flow.tensor.constant dense<[
+  %iree_input = flow.tensor.dynamic_constant dense<[
     [0, 1, 2, 3],
     [4, 5, 6, 7],
     [8, 9, 10, 11],
@@ -32,7 +32,7 @@ func.func @fully_dynamic_pack_simple() {
   %out_d0 = arith.ceildivui %in_d0, %c2 : index
   %out_d1 = arith.ceildivui %in_d1, %c2 : index
   %init = tensor.empty(%out_d0, %out_d1, %c2, %c2) : tensor<?x?x?x?xi32>
-  %pack = tensor.pack %iree_input inner_dims_pos = [0, 1] inner_tiles = [%c2, %c2] into %init
+  %pack = linalg.pack %iree_input inner_dims_pos = [0, 1] inner_tiles = [%c2, %c2] into %init
       : tensor<?x?xi32> -> tensor<?x?x?x?xi32>
   %cast = tensor.cast %pack : tensor<?x?x?x?xi32> to tensor<2x2x2x2xi32>
   check.expect_eq_const(%cast, dense<[[[[0, 1], [4, 5]], [[2, 3], [6, 7]]], [[[8, 9], [12, 13]], [[10 ,11], [14, 15]]]]> : tensor<2x2x2x2xi32>) : tensor<2x2x2x2xi32>
@@ -50,7 +50,7 @@ func.func @fully_dynamic_pack_pad_transpose_inner_and_outer_dims_large() {
   %tiled_d0 = arith.ceildivui %d0, %c32 : index
   %tiled_d1 = arith.ceildivui %d1, %c16 : index
   %init_pack = tensor.empty(%tiled_d1, %tiled_d0, %c16, %c32) : tensor<?x?x?x?xi32>
-  %pack = tensor.pack %source padding_value(%padding_value : i32)
+  %pack = linalg.pack %source padding_value(%padding_value : i32)
       outer_dims_perm = [1, 0] inner_dims_pos = [1, 0] inner_tiles = [%c16, %c32] into %init_pack
       : tensor<?x?xi32> -> tensor<?x?x?x?xi32>
   %cast_pack = tensor.cast %pack : tensor<?x?x?x?xi32> to tensor<16x4x16x32xi32>
@@ -64,7 +64,7 @@ func.func @fully_dynamic_pack_pad_transpose_inner_and_outer_dims_large() {
     ^bb0(%b0 : index, %b1 : index):
       tensor.yield %padding_value : i32
   } : tensor<100x250xi32> to tensor<128x256xi32>
-  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
+  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] output_shape [16, 4, 16, 32] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
   %init_transpose = tensor.empty() : tensor<16x4x16x32xi32>
   %transpose = linalg.transpose
     ins(%reshape : tensor<4x32x16x16xi32>)
@@ -85,7 +85,7 @@ func.func @dynamic_pack_large() {
   %tiled_d0 = arith.ceildivui %d0, %c32 : index
   %tiled_d1 = arith.ceildivui %d1, %c16 : index
   %dyn_init_pack = tensor.empty(%tiled_d0, %tiled_d1) : tensor<?x?x32x16xi32>
-  %pack = tensor.pack %source inner_dims_pos = [0, 1] inner_tiles = [32, 16] into %dyn_init_pack
+  %pack = linalg.pack %source inner_dims_pos = [0, 1] inner_tiles = [32, 16] into %dyn_init_pack
       : tensor<?x?xi32> -> tensor<?x?x32x16xi32>
   %cast_pack = tensor.cast %pack : tensor<?x?x32x16xi32> to tensor<4x16x32x16xi32>
 
@@ -93,7 +93,7 @@ func.func @dynamic_pack_large() {
   %c256 = arith.constant 256 : index
   %source2 = call @generate_2D_source(%c128, %c256) : (index, index) -> tensor<?x?xi32>
   %static_source = tensor.cast %source2 : tensor<?x?xi32> to tensor<128x256xi32>
-  %reshape = tensor.expand_shape %static_source [[0, 1], [2, 3]] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
+  %reshape = tensor.expand_shape %static_source [[0, 1], [2, 3]] output_shape [4, 16, 32, 16] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
   %init_transpose = tensor.empty() : tensor<4x16x32x16xi32>
   %transpose = linalg.transpose
     ins(%reshape : tensor<4x32x16x16xi32>)
@@ -113,7 +113,7 @@ func.func @dynamic_pack_transpose_inner_dims_large() {
   %tiled_d0 = arith.ceildivui %d0, %c32 : index
   %tiled_d1 = arith.ceildivui %d1, %c16 : index
   %dyn_init_pack = tensor.empty(%tiled_d0, %tiled_d1) : tensor<?x?x16x32xi32>
-  %pack = tensor.pack %source inner_dims_pos = [1, 0] inner_tiles = [16, 32] into %dyn_init_pack
+  %pack = linalg.pack %source inner_dims_pos = [1, 0] inner_tiles = [16, 32] into %dyn_init_pack
       : tensor<?x?xi32> -> tensor<?x?x16x32xi32>
   %cast_pack = tensor.cast %pack : tensor<?x?x16x32xi32> to tensor<4x16x16x32xi32>
 
@@ -121,7 +121,7 @@ func.func @dynamic_pack_transpose_inner_dims_large() {
   %c256 = arith.constant 256 : index
   %source2 = call @generate_2D_source(%c128, %c256) : (index, index) -> tensor<?x?xi32>
   %static_source = tensor.cast %source2 : tensor<?x?xi32> to tensor<128x256xi32>
-  %reshape = tensor.expand_shape %static_source [[0, 1], [2, 3]] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
+  %reshape = tensor.expand_shape %static_source [[0, 1], [2, 3]] output_shape [4, 16, 16, 32] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
   %init_transpose = tensor.empty() : tensor<4x16x16x32xi32>
   %transpose = linalg.transpose
     ins(%reshape : tensor<4x32x16x16xi32>)
@@ -143,7 +143,7 @@ func.func @dynamic_pack_pad_large() {
   %tiled_d0 = arith.ceildivui %d0, %c32 : index
   %tiled_d1 = arith.ceildivui %d1, %c16 : index
   %dyn_init_pack = tensor.empty(%tiled_d0, %tiled_d1) : tensor<?x?x32x16xi32>
-  %pack = tensor.pack %source padding_value(%padding_value : i32)
+  %pack = linalg.pack %source padding_value(%padding_value : i32)
       inner_dims_pos = [0, 1] inner_tiles = [32, 16] into %dyn_init_pack
       : tensor<?x?xi32> -> tensor<?x?x32x16xi32>
   %cast_pack = tensor.cast %pack : tensor<?x?x32x16xi32> to tensor<4x16x32x16xi32>
@@ -156,7 +156,7 @@ func.func @dynamic_pack_pad_large() {
     ^bb0(%b0 : index, %b1 : index):
       tensor.yield %padding_value : i32
   } : tensor<100x250xi32> to tensor<128x256xi32>
-  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
+  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] output_shape [4, 16, 32, 16] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
   %init_transpose = tensor.empty() : tensor<4x16x32x16xi32>
   %transpose = linalg.transpose
     ins(%reshape : tensor<4x32x16x16xi32>)
@@ -178,7 +178,7 @@ func.func @dynamic_pack_pad_transpose_outer_dims_large() {
   %tiled_d0 = arith.ceildivui %d0, %c32 : index
   %tiled_d1 = arith.ceildivui %d1, %c16 : index
   %dyn_init_pack = tensor.empty(%tiled_d1, %tiled_d0) : tensor<?x?x32x16xi32>
-  %pack = tensor.pack %source padding_value(%padding_value : i32)
+  %pack = linalg.pack %source padding_value(%padding_value : i32)
       outer_dims_perm = [1, 0] inner_dims_pos = [0, 1] inner_tiles = [32, 16] into %dyn_init_pack
       : tensor<?x?xi32> -> tensor<?x?x32x16xi32>
   %cast_pack = tensor.cast %pack : tensor<?x?x32x16xi32> to tensor<16x4x32x16xi32>
@@ -191,7 +191,7 @@ func.func @dynamic_pack_pad_transpose_outer_dims_large() {
     ^bb0(%b0 : index, %b1 : index):
       tensor.yield %padding_value : i32
   } : tensor<100x250xi32> to tensor<128x256xi32>
-  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
+  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] output_shape [16, 4, 32, 16] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
   %init_transpose = tensor.empty() : tensor<16x4x32x16xi32>
   %transpose = linalg.transpose
     ins(%reshape : tensor<4x32x16x16xi32>)
@@ -213,7 +213,7 @@ func.func @dynamic_pack_pad_transpose_inner_dims_large() {
   %tiled_d0 = arith.ceildivui %d0, %c32 : index
   %tiled_d1 = arith.ceildivui %d1, %c16 : index
   %init_pack = tensor.empty(%tiled_d0, %tiled_d1) : tensor<?x?x16x32xi32>
-  %pack = tensor.pack %source padding_value(%padding_value : i32)
+  %pack = linalg.pack %source padding_value(%padding_value : i32)
       inner_dims_pos = [1, 0] inner_tiles = [16, 32] into %init_pack
       : tensor<?x?xi32> -> tensor<?x?x16x32xi32>
   %cast_pack = tensor.cast %pack : tensor<?x?x16x32xi32> to tensor<4x16x16x32xi32>
@@ -227,7 +227,7 @@ func.func @dynamic_pack_pad_transpose_inner_dims_large() {
     ^bb0(%b0 : index, %b1 : index):
       tensor.yield %padding_value : i32
   } : tensor<100x250xi32> to tensor<128x256xi32>
-  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
+  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] output_shape [4, 16, 16, 32] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
   %init_transpose = tensor.empty() : tensor<4x16x16x32xi32>
   %transpose = linalg.transpose
     ins(%reshape : tensor<4x32x16x16xi32>)
@@ -249,7 +249,7 @@ func.func @dynamic_pack_pad_transpose_inner_and_outer_dims_large() {
   %tiled_d0 = arith.ceildivui %d0, %c32 : index
   %tiled_d1 = arith.ceildivui %d1, %c16 : index
   %init_pack = tensor.empty(%tiled_d1, %tiled_d0) : tensor<?x?x16x32xi32>
-  %pack = tensor.pack %source padding_value(%padding_value : i32)
+  %pack = linalg.pack %source padding_value(%padding_value : i32)
       outer_dims_perm = [1, 0] inner_dims_pos = [1, 0] inner_tiles = [16, 32] into %init_pack
       : tensor<?x?xi32> -> tensor<?x?x16x32xi32>
   %cast_pack = tensor.cast %pack : tensor<?x?x16x32xi32> to tensor<16x4x16x32xi32>
@@ -263,7 +263,7 @@ func.func @dynamic_pack_pad_transpose_inner_and_outer_dims_large() {
     ^bb0(%b0 : index, %b1 : index):
       tensor.yield %padding_value : i32
   } : tensor<100x250xi32> to tensor<128x256xi32>
-  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] : tensor<128x256xi32> into tensor<4x32x16x16xi32>
+  %reshape = tensor.expand_shape %pad [[0, 1], [2, 3]] output_shape [16, 4, 16, 32]: tensor<128x256xi32> into tensor<4x32x16x16xi32>
   %init_transpose = tensor.empty() : tensor<16x4x16x32xi32>
   %transpose = linalg.transpose
     ins(%reshape : tensor<4x32x16x16xi32>)

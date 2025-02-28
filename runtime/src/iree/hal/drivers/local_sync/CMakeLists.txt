@@ -25,17 +25,16 @@ iree_cc_library(
     "sync_semaphore.c"
   DEPS
     iree::base
-    iree::base::core_headers
     iree::base::internal
     iree::base::internal::arena
     iree::base::internal::cpu
     iree::base::internal::synchronization
-    iree::base::tracing
     iree::hal
     iree::hal::local
     iree::hal::local::executable_environment
-    iree::hal::utils::buffer_transfer
     iree::hal::utils::deferred_command_buffer
+    iree::hal::utils::file_transfer
+    iree::hal::utils::files
     iree::hal::utils::semaphore_base
   PUBLIC
 )

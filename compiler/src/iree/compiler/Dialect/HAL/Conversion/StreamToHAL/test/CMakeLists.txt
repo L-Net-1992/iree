@@ -16,6 +16,9 @@ iree_lit_test_suite(
   SRCS
     "channel_ops.mlir"
     "cmd_ops.mlir"
+    "context_ops.mlir"
+    "debug_ops.mlir"
+    "file_ops.mlir"
     "resource_ops.mlir"
     "timepoint_ops.mlir"
     "transfer_ops.mlir"

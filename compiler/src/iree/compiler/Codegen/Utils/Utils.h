@@ -7,22 +7,22 @@
 #ifndef IREE_COMPILER_CODEGEN_UTILS_UTILS_H_
 #define IREE_COMPILER_CODEGEN_UTILS_UTILS_H_
 
-#include "iree/compiler/Codegen/Interfaces/PartitionableLoopsInterface.h"
+#include "iree/compiler/Dialect/Flow/IR/FlowOps.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
-#include "llvm/ADT/StringMap.h"
+#include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtOps.h"
 #include "llvm/TargetParser/Triple.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
+#include "mlir/Dialect/Vector/IR/ScalableValueBoundsConstraintSet.h"
+#include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Interfaces/ViewLikeInterface.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
-namespace mlir {
-namespace iree_compiler {
+namespace mlir::iree_compiler {
 
 static constexpr unsigned kNumMaxParallelDims = 3;
 
@@ -31,54 +31,82 @@ static constexpr unsigned kNumMaxParallelDims = 3;
 //===----------------------------------------------------------------------===//
 
 /// Returns true if the given `func` is a kernel dispatch entry point.
-bool isEntryPoint(func::FuncOp func);
-
-/// Returns a map from function symbol name to corresponding entry point op.
-llvm::StringMap<IREE::HAL::ExecutableExportOp> getAllEntryPoints(
-    ModuleOp module);
+bool isEntryPoint(mlir::FunctionOpInterface func);
 
 /// Returns the entry point op for the `funcOp`. Returns `nullptr` on failure.
-FailureOr<IREE::HAL::ExecutableExportOp> getEntryPoint(func::FuncOp funcOp);
+std::optional<IREE::HAL::ExecutableExportOp>
+getEntryPoint(mlir::FunctionOpInterface funcOp);
 
-/// Returns the ExecutableVariableOp enclosing `op`. Returns `nullptr` on
-/// failure.
-FailureOr<IREE::HAL::ExecutableVariantOp> getExecutableVariantOp(Operation *op);
+/// Returns the StringAttr with the name `stringAttr` in the `srcAttr`, if
+/// found. The `srcAttr` can be either IREE::HAL::ExecutableTargetAttr or
+/// DictionaryAttr.
+std::optional<StringAttr> getConfigStringAttr(Attribute srcAttr,
+                                              StringRef stringAttr);
 
-/// Returns the StringAttr with the name `stringAttr` in the `targetAttr`, if
+/// Returns the IntegerAttr with the name `integerAttr` in the `srcAttr`, if
 /// found.
-std::optional<StringAttr> getConfigStringAttr(
-    IREE::HAL::ExecutableTargetAttr targetAttr, StringRef stringAttr);
+std::optional<IntegerAttr> getConfigIntegerAttr(Attribute srcAttr,
+                                                StringRef integerAttr);
 
-/// Returns the IntegerAttr with the name `integerAttr` in the `targetAttr`, if
+/// Returns the BoolAttr with the name `boolAttr` in the `srcAttr`, if
 /// found.
-std::optional<IntegerAttr> getConfigIntegerAttr(
-    IREE::HAL::ExecutableTargetAttr targetAttr, StringRef integerAttr);
+std::optional<BoolAttr> getConfigBoolAttr(Attribute srcAttr,
+                                          StringRef boolAttr);
 
-/// Returns the BoolAttr with the name `integerAttr` in the `targetAttr`, if
-/// found.
-std::optional<BoolAttr> getConfigBoolAttr(
-    IREE::HAL::ExecutableTargetAttr targetAttr, StringRef integerAttr);
+/// Returns the LLVM Target triple associated with the `attr`, if set.
+std::optional<llvm::Triple> getTargetTriple(Attribute attr);
 
-/// Returns the LLVM Target triple associated with the `targetAttr`, if set.
-std::optional<llvm::Triple> getTargetTriple(
-    IREE::HAL::ExecutableTargetAttr targetAttr);
+/// Returns the target architecture name, in IREE_ARCH convention, from the
+/// given target triple.
+const char *getIreeArchNameForTargetTriple(llvm::Triple triple);
 
 /// Methods to get target information.
+bool isLLVMCPUBackend(IREE::HAL::ExecutableTargetAttr targetAttr);
 bool isVMVXBackend(IREE::HAL::ExecutableTargetAttr targetAttr);
-bool hasMicrokernels(IREE::HAL::ExecutableTargetAttr targetAttr);
+bool isROCMBackend(IREE::HAL::ExecutableTargetAttr targetAttr);
+
+// Returns true if the ukernel with given `ukernelName` is enabled.
+// If `ukernelName` is empty (the default), returns true if any ukernel
+// is enabled at all.
+bool hasUkernel(Attribute attr, StringRef ukernelName = "");
+
+/// Returns the CPU target features associated with the `attr`, if found.
+std::optional<StringRef> getCpuFeatures(Attribute attr);
+
+/// Returns true if `attr` has `feature` in its CPU features.
+bool hasFeature(Attribute attr, StringRef feature);
+
+/// Architecture identification.
+bool isX86(Attribute attr);
+bool isX86_64(Attribute attr);
+bool isAArch64(Attribute attr);
+bool isRISCV(Attribute attr);
+bool isRISCV32(Attribute attr);
 
 /// Checks if a tensor value is generated from a read-only object, like
 /// and interface binding with read-only attribute or from an `arith.constant`
 /// operation.
 bool isReadOnly(Value v);
 
+/// Multiple uses of `tensor.empty()` results in a copy since upstream
+/// treats `tensor.empty()` as an allocation and sees uses as a data-hazard
+/// creating copies/allocations. Since the `empty` op is a proxy for
+/// undef, these could just be duplicated to have a single use. This removes
+/// unnecessary data-hazards.
+LogicalResult duplicateTensorEmptyOps(OpBuilder &b, tensor::EmptyOp emptyOp);
+
 /// Return the static number of workgroup dispatched if it is known and
-/// constant. Return an empty vector otherwise.
-SmallVector<int64_t> getStaticNumWorkgroups(func::FuncOp funcOp);
+/// constant. If it is not known, it will return ShapedType::kDynamic.
+SmallVector<int64_t> getStaticNumWorkgroups(mlir::FunctionOpInterface funcOp);
 
 //===----------------------------------------------------------------------===//
 // Utility functions to set configurations
 //===----------------------------------------------------------------------===//
+
+LogicalResult setDefaultCustomOpLoweringConfig(
+    mlir::FunctionOpInterface FunctionOpInterface,
+    IREE::LinalgExt::CustomOp customOp,
+    std::function<LogicalResult(mlir::FunctionOpInterface)> configFn);
 
 /// Information about a tiled and distributed loop.
 ///
@@ -121,34 +149,27 @@ struct LoopTilingAndDistributionInfo {
   unsigned processorDistributionDim;
 };
 
-/// Assuming that `funcOp` contains a single nested scf.for that represented the
-/// tiled+fused+distributed loops with the distribution being across workgroups,
-/// i.e.
-///
-/// scf.for ... {
-///   ...
-///   scf.for ... {
-///     ...
-///     filtered_op.
-///     ...
-///     filtered_op.
-///     ...
-///   }
-/// }
-///
-/// Returns the list of TilingInterface ops in the functions. If there are no
-/// `scf.for` operations in the function return the TilingInterface operations
-/// in the body of the function if it has a single basic block.
-SmallVector<Operation *> getComputeOps(func::FuncOp funcOp);
+/// Returns the list of TilingInterface ops in the operation obtained by a
+/// post order walk of the operation. This implies that in case of
+/// nested compute ops, the outermost compute ops are towards the end of the
+/// list.
+SmallVector<Operation *> getComputeOps(Operation *containingOp);
 
 /// If the given `forOp` is a tiled and distributed loop, returns its tiling and
 /// distribution information.
-std::optional<LoopTilingAndDistributionInfo> isTiledAndDistributedLoop(
-    scf::ForOp forOp);
+std::optional<LoopTilingAndDistributionInfo>
+isTiledAndDistributedLoop(scf::ForOp forOp);
 
 /// Collects information about loops matching tiled+distribute pattern.
-SmallVector<LoopTilingAndDistributionInfo> getTiledAndDistributedLoopInfo(
-    func::FuncOp funcOp);
+SmallVector<LoopTilingAndDistributionInfo>
+getTiledAndDistributedLoopInfo(mlir::FunctionOpInterface funcOp);
+
+/// Sets the tile sizes of the SCFTilingOptions. If `tileScalableFlags` are
+/// provided the corresponding tile size will be multiplied by a vector.vscale
+/// op.
+void setSCFTileSizes(scf::SCFTilingOptions &options, TilingInterface op,
+                     ArrayRef<int64_t> tileSizes,
+                     ArrayRef<bool> tileScalableFlags);
 
 Operation *createLinalgCopyOp(OpBuilder &b, Location loc, Value from, Value to,
                               ArrayRef<NamedAttribute> attributes = {});
@@ -156,9 +177,27 @@ Operation *createLinalgCopyOp(OpBuilder &b, Location loc, Value from, Value to,
 /// Returns the option that distributes the ops using the flow workgroup
 /// ID/Count operations.
 linalg::LinalgLoopDistributionOptions getIREELinalgLoopDistributionOptions(
-    const SmallVector<int64_t> &tileSizes,
     linalg::DistributionMethod distributionMethod,
     int32_t maxWorkgroupParallelDims = kNumMaxParallelDims);
+
+// Helper to construct the strategy attribute dictionary for a pipeline that
+// does software pipelining.
+DictionaryAttr
+getSoftwarePipeliningAttrDict(MLIRContext *context,
+                              unsigned softwarePipelineDepth = 0,
+                              unsigned softwarePipelineStoreStage = 1);
+
+// Helpers to extract the pipelining configuration from the config dictionary.
+FailureOr<int64_t> getSoftwarePipelineDepth(DictionaryAttr);
+FailureOr<int64_t> getSoftwarePipelineStoreStage(DictionaryAttr);
+
+// Returns a small tiling factor for the given reduction `dimSize`.
+// Returns 0 to avoid tiling.
+int getReductionTilingFactor(int64_t dimSize);
+
+// Returns the minimal element bitwidth used in the operands and results of the
+// given Linalg op.
+int64_t getMinElementBitwidth(linalg::LinalgOp linalgOp);
 
 //===---------------------------------------------------------------------===//
 // Misc. utility functions.
@@ -171,6 +210,9 @@ OpFoldResult convertByteOffsetToElementOffset(RewriterBase &rewriter,
                                               OpFoldResult byteOffset,
                                               Type elementType);
 
+/// Check if a linalg.generic is representing an argmax operation.
+LogicalResult isArgmaxOp(linalg::GenericOp genericOp);
+
 /// Replace the uses of memref value `origValue` with the given
 /// `replacementValue`. Some uses of the memref value might require changes to
 /// the operation itself. Create new operations which can carry the change, and
@@ -182,7 +224,65 @@ void replaceMemrefUsesAndPropagateType(RewriterBase &rewriter, Location loc,
 void sinkOpsInCFG(const SmallVector<Operation *> &allocs,
                   DominanceInfo &dominators);
 
-}  // namespace iree_compiler
-}  // namespace mlir
+// Check if there is a fused linalg op present in the backward slice of any of
+// the inputs.
+bool hasFusedLeadingOp(linalg::LinalgOp rootOp);
 
-#endif  // IREE_COMPILER_CODEGEN_UTILS_UTILS_H_
+std::optional<vector::VscaleRange>
+getDefaultVscaleRange(IREE::HAL::ExecutableTargetAttr targetAttr);
+
+using DimBound = vector::ConstantOrScalableBound;
+using DimBoundSize = DimBound::BoundSize;
+
+/// Should the scalable upper bound be rounded up to the nearest multiple of
+/// vscale?
+enum class RoundUpVscaleMultiple { No, Yes };
+
+/// Computes the upper bound of `dimNum` dim of the ShapedType value
+/// `shapedValue`. If the optional `vscaleRange` is provided then the computed
+/// bound can be a scalable quantity.
+FailureOr<DimBoundSize>
+computeDimUpperBound(Value shapedValue, unsigned dimNum,
+                     std::optional<vector::VscaleRange> vscaleRange,
+                     RoundUpVscaleMultiple = RoundUpVscaleMultiple::No);
+
+// Utility to make sure we are storing the full incoming subspan. Otherwise we
+// cannot simply adjust the subspan's resultant type later.
+bool isFullSlice(OffsetSizeAndStrideOpInterface sliceLoadStoreOp,
+                 IREE::Flow::DispatchTensorType tensorType,
+                 ValueRange dynamicDims);
+
+//===----------------------------------------------------------------------===//
+// Utility functions for vector size inference for dynamic shapes
+//===----------------------------------------------------------------------===//
+
+struct VectorizationTileSizes {
+  SmallVector<int64_t> destShape;
+  SmallVector<int64_t> vectorSizes;
+  SmallVector<bool> vectorScalableFlags;
+};
+
+/// Returns a VectorizationTileSizes which contains the inferred bounded result
+/// shape and vector input sizes. This is useful to infer the sizes from a
+/// chain.
+std::optional<VectorizationTileSizes> inferSizesFromIR(Value val);
+
+/// Returns the result sizes and vector input sizes of the linalg.unpack op. The
+/// inferred bounding size is returned if it is dynamic shape. Returns
+/// std::nullopt if the shape inference failed.
+std::optional<VectorizationTileSizes> inferSizesFromIR(linalg::UnPackOp op);
+
+/// Returns the result sizes and vector input sizes of the linalg.pack op. The
+/// inferred bounding size is returned if it is dynamic shape. Returns
+/// std::nullopt if the shape inference failed.
+std::optional<VectorizationTileSizes> inferSizesFromIR(linalg::PackOp op);
+
+/// Tries to infer the vector sizes from an IR using ValueBounds analysis. If
+/// `opResult` is provided, it stores the bounded result shapes to destShape.
+/// Returns std::nullopt if vector sizes can't be inferred.
+std::optional<VectorizationTileSizes>
+inferSizesFromIR(linalg::LinalgOp linalgOp, std::optional<OpResult> opResult);
+
+} // namespace mlir::iree_compiler
+
+#endif // IREE_COMPILER_CODEGEN_UTILS_UTILS_H_

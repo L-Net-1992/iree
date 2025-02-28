@@ -9,8 +9,9 @@
 
 #include "mlir/Dialect/Tensor/TransformOps/TensorTransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
-#include "mlir/Dialect/Transform/IR/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
+#include "mlir/Dialect/Transform/IR/TransformTypes.h"
+#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/OpDefinition.h"
 
@@ -18,9 +19,6 @@ namespace mlir {
 namespace linalg {
 class LinalgOp;
 } // namespace linalg
-namespace pdl {
-class FoOperationTyperOp;
-} // namespace pdl
 namespace scf {
 class ForOp;
 } // namespace scf
@@ -36,7 +34,7 @@ template <int N, typename... MatchingArgs>
 auto unpackRegisteredMatchCallback(ImplicitLocOpBuilder &b,
                                    StringRef callbackName,
                                    MatchingArgs... args) {
-  SmallVector<Type> matchedTypes(N, pdl::OperationType::get(b.getContext()));
+  SmallVector<Type> matchedTypes(N, transform::AnyOpType::get(b.getContext()));
   auto matchOp = b.create<transform_ext::MatchCallbackOp>(
       matchedTypes, callbackName, std::forward<decltype(args)>(args)...);
   assert(matchOp->getNumResults() == N && "Unexpected number of results");
@@ -48,52 +46,34 @@ auto unpackRegisteredMatchCallback(ImplicitLocOpBuilder &b,
 
 /// A tracking listener for tensor IR that checks for payload replacement
 /// errors.
-class ErrorCheckingTrackingListener : public tensor::TrackingListener {
+class ErrorCheckingTrackingListener : public transform::TrackingListener {
 public:
-  using tensor::TrackingListener::TrackingListener;
+  using transform::TrackingListener::TrackingListener;
 
   ~ErrorCheckingTrackingListener() override {
-#ifdef LLVM_ENABLE_ABI_BREAKING_CHECKS
-    assert((errorStateChecked || !hadErrors) &&
-           "must check listener error state");
-#endif // LLVM_ENABLE_ABI_BREAKING_CHECKS
+    assert(status.succeeded() && "must check listener error state");
   }
 
-  DiagnosedSilenceableFailure check(Location loc) {
-    if (failed(checkErrorState()))
-      return emitDefiniteFailure(loc, "listener failed");
-    return DiagnosedSilenceableFailure::success();
-  }
-  DiagnosedSilenceableFailure check(Location loc,
-                                    DiagnosedSilenceableFailure &&diag) {
-    if (failed(checkErrorState())) {
-      auto definite = emitDefiniteFailure(loc, "listener failed");
-      if (diag.isSilenceableFailure()) {
-        definite.attachNote()
-            << "was propagating silenceable error:" << diag.getMessage();
-        (void)diag.silence();
-      }
-      return definite;
-    }
-    return std::move(diag);
-  }
+  /// Return "true" if this tracking listener had a failure.
+  bool failed() const { return !status.succeeded(); }
 
-  LogicalResult checkErrorState() const {
-#ifdef LLVM_ENABLE_ABI_BREAKING_CHECKS
-    errorStateChecked = true;
-#endif // LLVM_ENABLE_ABI_BREAKING_CHECKS
-    return failure(hadErrors);
+  /// Check and return the current error state of this listener. In case of a
+  /// failure state, only the most recent error is returned. Afterwards, resets
+  /// the error state.
+  DiagnosedSilenceableFailure checkAndResetError() {
+    DiagnosedSilenceableFailure result(std::move(status));
+    status = DiagnosedSilenceableFailure::success();
+    return result;
   }
 
 private:
-  void notifyPayloadReplacementNotFound(Operation *op,
-                                        ValueRange values) override;
+  void
+  notifyPayloadReplacementNotFound(Operation *op, ValueRange values,
+                                   DiagnosedSilenceableFailure &&diag) override;
 
-  bool hadErrors = false;
-
-#ifdef LLVM_ENABLE_ABI_BREAKING_CHECKS
-  mutable bool errorStateChecked = false;
-#endif // LLVM_ENABLE_ABI_BREAKING_CHECKS
+  /// The error state of this listener. "Success" indicates that no error
+  /// happened so far. Otherwise, the status contains the most recent error.
+  DiagnosedSilenceableFailure status = DiagnosedSilenceableFailure::success();
 };
 
 } // namespace mlir

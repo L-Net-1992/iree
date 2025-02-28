@@ -16,12 +16,15 @@
 
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Affine/Passes.h"
+#include "mlir/Dialect/ArmSME/Transforms/Passes.h"
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Dialect/SPIRV/Transforms/Passes.h"
 #include "mlir/Dialect/Shape/Transforms/Passes.h"
+#include "mlir/Dialect/Transform/Transforms/Passes.h"
 #include "mlir/Transforms/Passes.h"
 
 namespace mlir {
@@ -46,15 +49,18 @@ inline void registerMlirPasses() {
   registerViewOpGraphPass();
   registerStripDebugInfoPass();
   registerSymbolDCEPass();
+  bufferization::registerBufferizationPasses();
+  registerConvertComplexToStandardPass();
 
   // Generic conversions
   registerReconcileUnrealizedCastsPass();
 
   // Affine
   affine::registerAffinePasses();
-  affine::registerAffineLoopFusionPass();
-  affine::registerAffinePipelineDataTransferPass();
-  registerConvertAffineToStandardPass();
+  registerLowerAffinePass();
+
+  // Arm SME
+  arm_sme::registerArmSMEPasses();
 
   // Linalg
   registerLinalgPasses();
@@ -78,8 +84,11 @@ inline void registerMlirPasses() {
   registerConvertGPUToSPIRVPass();
   registerConvertControlFlowToSPIRVPass();
   registerConvertFuncToSPIRVPass();
+
+  // Transform Dialect
+  transform::registerTransformPasses();
 }
 
-}  // namespace mlir
+} // namespace mlir
 
-#endif  // IREE_COMPILER_TOOLS_INIT_MLIR_PASSES_H_
+#endif // IREE_COMPILER_TOOLS_INIT_MLIR_PASSES_H_

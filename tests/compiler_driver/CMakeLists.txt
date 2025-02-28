@@ -18,12 +18,15 @@ iree_lit_test_suite(
     "hal_executable.mlir"
     "inline_dynamic_hal_executable.mlir"
     "inline_static_hal_executable.mlir"
+    "precompile.mlir"
     "preprocessing_flags.mlir"
     "smoketest.mlir"
     "streams.mlir"
   TOOLS
     FileCheck
     iree-compile
+  LABELS
+    "hostonly"
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

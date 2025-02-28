@@ -48,14 +48,14 @@ static Status SyncSimulatedHostOpI32(iree_hal_buffer_t* source_buffer,
   if (status.ok()) {
     status = iree_hal_buffer_map_range(
         source_buffer, IREE_HAL_MAPPING_MODE_SCOPED,
-        IREE_HAL_MEMORY_ACCESS_READ, 0, IREE_WHOLE_BUFFER, &source_mapping);
+        IREE_HAL_MEMORY_ACCESS_READ, 0, IREE_HAL_WHOLE_BUFFER, &source_mapping);
   }
   iree_hal_buffer_mapping_t target_mapping = {{0}};
   if (status.ok()) {
     status =
         iree_hal_buffer_map_range(target_buffer, IREE_HAL_MAPPING_MODE_SCOPED,
                                   IREE_HAL_MEMORY_ACCESS_DISCARD_WRITE, 0,
-                                  IREE_WHOLE_BUFFER, &target_mapping);
+                                  IREE_HAL_WHOLE_BUFFER, &target_mapping);
   }
 
   // Sad slow host work. Whenever possible it's worth it to move these into the
@@ -202,8 +202,8 @@ class CustomModuleState final {
       const vm::ref<iree_hal_fence_t> signal_fence) {
     // TODO(benvanik): better fence helpers when timelines are not needed.
     vm::ref<iree_hal_semaphore_t> semaphore;
-    IREE_RETURN_IF_ERROR(
-        iree_hal_semaphore_create(device_.get(), 0ull, &semaphore));
+    IREE_RETURN_IF_ERROR(iree_hal_semaphore_create(
+        device_.get(), 0ull, IREE_HAL_SEMAPHORE_FLAG_NONE, &semaphore));
     vm::ref<iree_hal_fence_t> alloca_fence;
     IREE_RETURN_IF_ERROR(iree_hal_fence_create_at(
         semaphore.get(), 1ull, host_allocator_, &alloca_fence));
@@ -288,6 +288,16 @@ class CustomModule final : public vm::NativeModule<CustomModuleState> {
     auto state = std::make_unique<CustomModuleState>(vm::retain_ref(device_),
                                                      host_allocator);
     return state;
+  }
+
+  // Forks a parent state into a child state, preserving any module state
+  // by-reference.
+  StatusOr<std::unique_ptr<CustomModuleState>> ForkState(
+      CustomModuleState* parent_state,
+      iree_allocator_t host_allocator) override {
+    // No special state to preserve; the device is the same for all states
+    // created from this module.
+    return CreateState(host_allocator);
   }
 
  private:

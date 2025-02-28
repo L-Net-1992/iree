@@ -4,165 +4,88 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/InputConversion/Common/PassDetail.h"
 #include "iree/compiler/InputConversion/Common/Passes.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Tosa/IR/TosaOps.h"
+#include "iree/compiler/PluginAPI/Client.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 
-// Dialect specific
-#ifdef IREE_HAVE_MHLO_INPUT
-#include "iree/compiler/InputConversion/MHLO/Passes.h"
-#include "mhlo/IR/hlo_ops.h"
-#endif  // IREE_HAVE_MHLO_INPUT
-#ifdef IREE_HAVE_TOSA_INPUT
-#include "iree/compiler/InputConversion/TOSA/Passes.h"
-#endif  // IREE_HAVE_TOSA_INPUT
-#ifdef IREE_HAVE_TORCH_INPUT
-#include "iree/compiler/InputConversion/TMTensor/Passes.h"
-#include "torch-mlir-dialects/Dialect/TMTensor/IR/TMTensorDialect.h"
-#endif  // IREE_HAVE_TORCH_INPUT
+namespace mlir::iree_compiler::InputConversion {
 
-namespace mlir::iree_compiler {
+#define GEN_PASS_DEF_AUTOINPUTCONVERSIONPIPELINEPASS
+#include "iree/compiler/InputConversion/Common/Passes.h.inc"
 
-struct AutoInputConversionPipelinePass
-    : public AutoInputConversionPipelineBase<AutoInputConversionPipelinePass> {
+namespace {
+
+class AutoInputConversionPipelinePass final
+    : public impl::AutoInputConversionPipelinePassBase<
+          AutoInputConversionPipelinePass> {
+public:
+  using impl::AutoInputConversionPipelinePassBase<
+      AutoInputConversionPipelinePass>::AutoInputConversionPipelinePassBase;
+  AutoInputConversionPipelinePass(PipelineExtensions *pipelineExtensions)
+      : pipelineExtensions(pipelineExtensions) {}
   void runOnOperation() override;
+  void getDependentDialects(DialectRegistry &registry) const override;
+
+  PipelineExtensions *pipelineExtensions = nullptr;
 };
-
-// All the features seen that should be handled during input conversion.
-struct InputFeatures {
-  // MHLO features.
-  bool hasMHLO = false;
-  bool hasStableHLO = false;
-  // - XLA import features.
-  bool hasTuples = false;
-
-  // TOSA features.
-  bool hasTOSA = false;
-
-  // tm_tensor
-  bool hasTmTensor = false;
-};
-
-static void populateHloFeatures(Operation* op, InputFeatures& features) {
-  features.hasMHLO = true;
-  if (features.hasTuples) {
-    return;
-  }
-
-  if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
-    FunctionType type = dyn_cast<FunctionType>(funcOp.getFunctionType());
-    for (auto t : type.getResults()) {
-      if (isa<TupleType>(t)) {
-        features.hasTuples = true;
-        return;
-      }
-    }
-    for (auto t : type.getInputs()) {
-      if (isa<TupleType>(t)) {
-        features.hasTuples = true;
-        return;
-      }
-    }
-  }
-
-  // Check for tuple operands or results.
-  for (auto t : op->getOperandTypes()) {
-    if (isa<TupleType>(t)) {
-      features.hasTuples = true;
-      return;
-    }
-  }
-  for (auto t : op->getResultTypes()) {
-    if (isa<TupleType>(t)) {
-      features.hasTuples = true;
-      return;
-    }
-  }
-}
-
-static void populateFeatures(Operation* op, const Dialect* mhloDialect,
-                             const Dialect* tmTensorDialect,
-                             const Dialect* tosaDialect,
-                             InputFeatures& features) {
-  Dialect* d = op->getDialect();
-  if (d == mhloDialect) {
-    return populateHloFeatures(op, features);
-  }
-  if (d == tosaDialect) {
-    features.hasTOSA = true;
-    return;
-  }
-  if (d == tmTensorDialect) {
-    features.hasTmTensor = true;
-    return;
-  }
-}
 
 void AutoInputConversionPipelinePass::runOnOperation() {
-  ModuleOp module = getOperation();
-  MLIRContext* ctxt = &getContext();
-
-  InputFeatures features;
-  const Dialect* mhloDialect = ctxt->getLoadedDialect("mhlo");
-  const Dialect* tosaDialect = ctxt->getLoadedDialect("tosa");
-  const Dialect* tmTensorDialect = ctxt->getLoadedDialect("tm_tensor");
-  if (!mhloDialect && !tosaDialect && !tmTensorDialect) {
+  if (!pipelineExtensions)
     return;
-  }
 
-  auto res = module.walk([&](Operation* op) {
-    populateFeatures(op, mhloDialect, tmTensorDialect, tosaDialect, features);
-    if (features.hasMHLO && features.hasTOSA) {
-      module.emitError("not yet implemented mixture of *HLO and TOSA");
-      return WalkResult::interrupt();
+  ModuleOp module = getOperation();
+  llvm::StringSet<> detectedTypeMnemonics;
+  pipelineExtensions->populateDetectedCustomInputConversionTypes(
+      module, detectedTypeMnemonics);
+  if (detectedTypeMnemonics.empty())
+    return;
+
+  if (detectedTypeMnemonics.getNumItems() > 1) {
+    // TODO(scotttodd): handle multiple typeMnemonics (use all?)
+    auto diag = module.emitError(
+        "mixture of input types not yet implemented, set "
+        "'--iree-input-type=[type]' explicitly instead of using 'auto' or "
+        "audit the input program to understand why dialects are mixed");
+    diag << " (detected:";
+    for (auto &s : detectedTypeMnemonics) {
+      diag << " '" << s.first() << "'";
     }
-    if (features.hasMHLO && features.hasTmTensor) {
-      module.emitError("not yet implemented mixture of *HLO and TM Tensor");
-      return WalkResult::interrupt();
-    }
-    if (features.hasTOSA && features.hasTmTensor) {
-      module.emitError("not yet implemented mixture of TOSA and TM Tensor");
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  if (res.wasInterrupted()) {
+    diag << ")";
     return signalPassFailure();
   }
-  if (!features.hasMHLO && !features.hasTOSA && !features.hasTmTensor) {
-    return;
-  }
 
-  OpPassManager pm(ModuleOp::getOperationName(),
-                   OpPassManager::Nesting::Explicit);
-  if (features.hasMHLO) {
-    if (features.hasTuples) {
-      MHLO::buildXLAInputConversionPassPipeline(pm);
-    } else {
-      MHLO::buildMHLOInputConversionPassPipeline(pm);
-    }
+  auto typeMnemonic = detectedTypeMnemonics.begin()->getKey();
+  OpPassManager passManager(module.getOperationName());
+  bool foundExtension =
+      pipelineExtensions->extendCustomInputConversionPassPipeline(passManager,
+                                                                  typeMnemonic);
+  if (!foundExtension) {
+    // We expect that callers properly validate supported extensions and
+    // that if a plugin advertises support, it actually provides it.
+    module.emitError() << "custom input conversion for extension '"
+                       << typeMnemonic << "' not found";
+    return signalPassFailure();
   }
-  if (features.hasTOSA) {
-    buildTOSAInputConversionPassPipeline(pm);
-  }
-  if (features.hasTmTensor) {
-    pm.addNestedPass<func::FuncOp>(
-        TMTensor::createConvertTMTensorToLinalgExtPass());
-  }
-
-  if (failed(runPipeline(pm, module))) {
-    signalPassFailure();
+  if (failed(runPipeline(passManager, module))) {
+    return signalPassFailure();
   }
 }
+
+void AutoInputConversionPipelinePass::getDependentDialects(
+    DialectRegistry &registry) const {
+  if (pipelineExtensions) {
+    pipelineExtensions->registerDialects(registry);
+  }
+}
+
+} // namespace
 
 std::unique_ptr<OperationPass<ModuleOp>>
-createAutoInputConversionPipelinePass() {
-  return std::make_unique<AutoInputConversionPipelinePass>();
+createAutoInputConversionPipelinePass(PipelineExtensions *pipelineExtensions) {
+  return std::make_unique<AutoInputConversionPipelinePass>(pipelineExtensions);
 }
 
-}  // namespace mlir::iree_compiler
+} // namespace mlir::iree_compiler::InputConversion

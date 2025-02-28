@@ -1,5 +1,10 @@
-// RUN: iree-opt --iree-llvmcpu-peel -split-input-file %s | FileCheck %s
+// RUN: iree-opt --pass-pipeline="builtin.module(func.func(iree-llvmcpu-peel))" -split-input-file %s | FileCheck %s
 
+#pipeline_layout = #hal.pipeline.layout<bindings = [
+  #hal.pipeline.binding<storage_buffer>,
+  #hal.pipeline.binding<storage_buffer>,
+  #hal.pipeline.binding<storage_buffer>
+]>
 func.func @peel_static_matmul() {
   %c16 = arith.constant 16 : index
   %c49 = arith.constant 49 : index
@@ -9,9 +14,9 @@ func.func @peel_static_matmul() {
   %c512 = arith.constant 512 : index
   %c128 = arith.constant 128 : index
   %cst = arith.constant 0.000000e+00 : f32
-  %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) : !flow.dispatch.tensor<readonly:tensor<128x49xf32>>
-  %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) : !flow.dispatch.tensor<readonly:tensor<49x512xf32>>
-  %2 = hal.interface.binding.subspan set(0) binding(2) type(storage_buffer) : !flow.dispatch.tensor<writeonly:tensor<128x512xf32>>
+  %0 = hal.interface.binding.subspan layout(#pipeline_layout) binding(0) : !flow.dispatch.tensor<readonly:tensor<128x49xf32>>
+  %1 = hal.interface.binding.subspan layout(#pipeline_layout) binding(1) : !flow.dispatch.tensor<readonly:tensor<49x512xf32>>
+  %2 = hal.interface.binding.subspan layout(#pipeline_layout) binding(2) : !flow.dispatch.tensor<writeonly:tensor<128x512xf32>>
   %workgroup_id_x = hal.interface.workgroup.id[0] : index
   %workgroup_count_x = hal.interface.workgroup.count[0] : index
   %workgroup_id_y = hal.interface.workgroup.id[1] : index
@@ -91,7 +96,7 @@ module {
         %3 = affine.apply #map1(%arg2)
         %extracted_slice = tensor.extract_slice %arg0[%3, %arg4] [16, %2] [1, 1] : tensor<?x?xf32> to tensor<16x?xf32>
         %extracted_slice_1 = tensor.extract_slice %arg5[%arg2, %arg4, 0, 0] [1, %2, 16, 1] [1, 1, 1, 1] : tensor<?x?x16x1xf32> to tensor<1x?x16x1xf32>
-        %pack = tensor.pack %extracted_slice inner_dims_pos = [0, 1] inner_tiles = [16, 1] into %extracted_slice_1 {lowering_config = #config} : tensor<16x?xf32> -> tensor<1x?x16x1xf32>
+        %pack = linalg.pack %extracted_slice inner_dims_pos = [0, 1] inner_tiles = [16, 1] into %extracted_slice_1 {lowering_config = #config} : tensor<16x?xf32> -> tensor<1x?x16x1xf32>
         %inserted_slice = tensor.insert_slice %pack into %arg5[%arg2, %arg4, 0, 0] [1, %2, 16, 1] [1, 1, 1, 1] : tensor<1x?x16x1xf32> into tensor<?x?x16x1xf32>
         scf.yield %inserted_slice : tensor<?x?x16x1xf32>
       }
@@ -103,6 +108,6 @@ module {
 // CHECK-LABEL: func.func @peel_pack
 // CHECK:         scf.for
 // CHECK:           scf.for
-// CHECK:             tensor.pack {{.*}} : tensor<16x16xf32> -> tensor<1x16x16x1xf32>
+// CHECK:             linalg.pack {{.*}} : tensor<16x16xf32> -> tensor<1x16x16x1xf32>
 // CHECK:           scf.for
-// CHECK:             tensor.pack {{.*}} : tensor<16x?xf32> -> tensor<1x?x16x1xf32>
+// CHECK:             linalg.pack {{.*}} : tensor<16x?xf32> -> tensor<1x?x16x1xf32>

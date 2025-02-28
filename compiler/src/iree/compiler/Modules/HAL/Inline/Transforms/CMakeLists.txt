@@ -27,6 +27,7 @@ iree_cc_library(
     MLIRArithTransforms
     MLIRFuncDialect
     MLIRFuncTransforms
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRMathDialect
     MLIRMathTransforms
@@ -35,7 +36,9 @@ iree_cc_library(
     MLIRSCFDialect
     MLIRSCFToControlFlow
     MLIRSupport
+    MLIRTransformUtils
     MLIRTransforms
+    iree::compiler::Dialect::HAL::Conversion
     iree::compiler::Dialect::HAL::Conversion::StandardToHAL
     iree::compiler::Dialect::HAL::Conversion::UtilToHAL
     iree::compiler::Dialect::HAL::IR::HALDialect
@@ -57,7 +60,6 @@ iree_cc_library(
   NAME
     PassHeaders
   HDRS
-    "PassDetail.h"
     "Passes.h"
     "Passes.h.inc"
   DEPS

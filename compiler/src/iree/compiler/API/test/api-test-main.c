@@ -10,35 +10,35 @@
 //
 // Originally contributed due to the work of edubart who figured out how to
 // be the first user of the combined MLIR+IREE CAPI:
-// https://github.com/openxla/iree/pull/8582
+// https://github.com/iree-org/iree/pull/8582
 
 #include <stdio.h>
 #include <string.h>
 
-#include "iree/compiler/API/MLIRInterop.h"
 #include "iree/compiler/embedding_api.h"
+#include "iree/compiler/mlir_interop.h"
 
 struct compiler_state_t {
-  iree_compiler_session_t* session;
+  iree_compiler_session_t *session;
   MlirContext context;
 };
 
 struct invocation_state_t {
-  iree_compiler_invocation_t* inv;
+  iree_compiler_invocation_t *inv;
 };
 
-static void initializeCompiler(struct compiler_state_t* state) {
+static void initializeCompiler(struct compiler_state_t *state) {
   ireeCompilerGlobalInitialize();
   state->session = ireeCompilerSessionCreate();
-  state->context = ireeCompilerSessionGetContext(state->session);
+  state->context = ireeCompilerSessionBorrowContext(state->session);
 }
 
-static void shutdownCompiler(struct compiler_state_t* state) {
+static void shutdownCompiler(struct compiler_state_t *state) {
   ireeCompilerSessionDestroy(state->session);
   ireeCompilerGlobalShutdown();
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   struct compiler_state_t state;
   initializeCompiler(&state);
 
@@ -62,8 +62,8 @@ int main(int argc, char** argv) {
   }
 
   // Set flags.
-  iree_compiler_error_t* err;
-  const char* flags[] = {
+  iree_compiler_error_t *err;
+  const char *flags[] = {
       "--iree-hal-target-backends=vmvx",
   };
   err = ireeCompilerSessionSetFlags(state.session, 1, flags);
@@ -75,8 +75,8 @@ int main(int argc, char** argv) {
   }
 
   // Import module.
-  iree_compiler_invocation_t* inv = ireeCompilerInvocationCreate(state.session);
-  if (!ireeCompilerInvocationImportModule(inv, module)) {
+  iree_compiler_invocation_t *inv = ireeCompilerInvocationCreate(state.session);
+  if (!ireeCompilerInvocationImportStealModule(inv, module)) {
     // ireeCompilerInvocationCreate takes ownership of the module regardless
     // of success or error, so we let it destroy it.
     ireeCompilerInvocationDestroy(inv);
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
   }
 
   // Output.
-  iree_compiler_output_t* output;
+  iree_compiler_output_t *output;
   err = ireeCompilerOutputOpenMembuffer(&output);
   if (err) {
     fprintf(stderr, "ERROR: %s\n", ireeCompilerErrorGetMessage(err));
@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
   }
 
   // Map memory and print size.
-  void* bytecode;
+  void *bytecode;
   uint64_t bytecodeSize;
   err = ireeCompilerOutputMapMemory(output, &bytecode, &bytecodeSize);
   if (err) {

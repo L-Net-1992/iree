@@ -8,30 +8,25 @@
 
 #include "iree/compiler/Dialect/Util/IR/UtilTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 
-namespace mlir {
-namespace iree_compiler {
-namespace IREE {
-namespace Util {
+namespace mlir::iree_compiler::IREE::Util {
 
 //------------------------------------------------------------------------------
 // Closure optimization
 //------------------------------------------------------------------------------
 
 void excludeClosureOperandsAndResults(
-    SmallVector<Value, 4> &operandValues,
-    ArrayRef<unsigned> excludedOperandIndices,
-    SmallVector<Type, 4> &resultTypes,
+    SmallVector<Value> &operandValues,
+    ArrayRef<unsigned> excludedOperandIndices, SmallVector<Type> &resultTypes,
     ArrayRef<unsigned> excludedResultIndices) {
-  SmallVector<Value, 4> oldOperandValues = operandValues;
+  SmallVector<Value> oldOperandValues = operandValues;
   operandValues.clear();
   for (auto it : llvm::enumerate(oldOperandValues)) {
     if (!llvm::count(excludedOperandIndices, it.index())) {
       operandValues.push_back(it.value());
     }
   }
-  SmallVector<Type, 4> oldResultTypes = resultTypes;
+  SmallVector<Type> oldResultTypes = resultTypes;
   resultTypes.clear();
   for (auto it : llvm::enumerate(oldResultTypes)) {
     if (!llvm::count(excludedResultIndices, it.index())) {
@@ -41,21 +36,20 @@ void excludeClosureOperandsAndResults(
 }
 
 void excludeClosureOperandsAndResults(
-    SmallVector<Value, 4> &operandValues, SmallVector<Value, 4> &operandDims,
-    ArrayRef<unsigned> excludedOperandIndices,
-    SmallVector<Type, 4> &resultTypes, SmallVector<Value, 4> &resultDims,
-    ArrayRef<unsigned> excludedResultIndices) {
-  SmallVector<Value, 4> oldOperandValues = operandValues;
-  SmallVector<Value, 4> oldOperandDims = operandDims;
+    SmallVector<Value> &operandValues, SmallVector<Value> &operandDims,
+    ArrayRef<unsigned> excludedOperandIndices, SmallVector<Type> &resultTypes,
+    SmallVector<Value> &resultDims, ArrayRef<unsigned> excludedResultIndices) {
+  SmallVector<Value> oldOperandValues = operandValues;
+  SmallVector<Value> oldOperandDims = operandDims;
   operandValues.clear();
   operandDims.clear();
   auto remainingOperandDims = llvm::ArrayRef(oldOperandDims);
   for (auto it : llvm::enumerate(oldOperandValues)) {
     unsigned numDynamicDims = 0;
     auto type = it.value().getType();
-    if (auto shapedType = type.dyn_cast<ShapedType>()) {
+    if (auto shapedType = llvm::dyn_cast<ShapedType>(type)) {
       numDynamicDims = shapedType.getNumDynamicDims();
-    } else if (type.isa<IREE::Util::SizeAwareTypeInterface>()) {
+    } else if (llvm::isa<IREE::Util::SizeAwareTypeInterface>(type)) {
       numDynamicDims = 1;
     }
     if (!llvm::count(excludedOperandIndices, it.index())) {
@@ -67,17 +61,17 @@ void excludeClosureOperandsAndResults(
     remainingOperandDims = remainingOperandDims.drop_front(numDynamicDims);
   }
 
-  SmallVector<Type, 4> oldResultTypes = resultTypes;
-  SmallVector<Value, 4> oldResultDims = resultDims;
+  SmallVector<Type> oldResultTypes = resultTypes;
+  SmallVector<Value> oldResultDims = resultDims;
   resultTypes.clear();
   resultDims.clear();
   auto remainingResultDims = llvm::ArrayRef(oldResultDims);
   for (auto it : llvm::enumerate(oldResultTypes)) {
     unsigned numDynamicDims = 0;
     auto type = it.value();
-    if (auto shapedType = type.dyn_cast<ShapedType>()) {
+    if (auto shapedType = llvm::dyn_cast<ShapedType>(type)) {
       numDynamicDims = shapedType.getNumDynamicDims();
-    } else if (type.isa<IREE::Util::SizeAwareTypeInterface>()) {
+    } else if (llvm::isa<IREE::Util::SizeAwareTypeInterface>(type)) {
       numDynamicDims = 1;
     }
     if (!llvm::count(excludedResultIndices, it.index())) {
@@ -96,7 +90,7 @@ void eraseRegionResults(Region &region,
   for (auto &block : region.getBlocks()) {
     auto *terminatorOp = block.getTerminator();
     if (terminatorOp && terminatorOp->hasTrait<OpTrait::ReturnLike>()) {
-      llvm::SmallVector<Value, 4> newReturns;
+      llvm::SmallVector<Value> newReturns;
       for (auto it : llvm::enumerate(terminatorOp->getOperands())) {
         if (!llvm::count(excludedResultIndices, it.index())) {
           newReturns.push_back(it.value());
@@ -105,6 +99,88 @@ void eraseRegionResults(Region &region,
       terminatorOp->setOperands(newReturns);
     }
   }
+}
+
+// Finds any yielded region results that are duplicates of each other (as
+// defined by having the same SSA value). Returns a map of result indices to the
+// result index that is the leader of an equivalence class on each SSA value.
+// Example:
+//  yield %a, %b, %a, %b -> (0, 1, 0, 1)
+// Note that a result index in the map with a value of its own index indicates
+// a result that is not duplicated and that must be preserved.
+static SmallVector<unsigned> findDuplicateRegionResults(Region &region) {
+  // Gather all yield ops in the closure.
+  SmallVector<IREE::Util::ClosureYieldOpInterface> yieldOps;
+  for (auto &block : region.getBlocks()) {
+    if (block.empty()) {
+      continue;
+    }
+    auto *terminatorOp = block.getTerminator();
+    if (auto yieldOp = dyn_cast_if_present<IREE::Util::ClosureYieldOpInterface>(
+            terminatorOp)) {
+      yieldOps.push_back(yieldOp);
+    }
+  }
+  if (yieldOps.empty()) {
+    return {};
+  }
+  const unsigned resultCount =
+      yieldOps.front().getClosureResultsMutable().size();
+
+  // Build a map of result indices to its base duplicate for each yield site.
+  // Base/non-duplicated values will be identity.
+  // Example:
+  //   yield %a, %b, %a, %b -> (0, 1, 0, 1)
+  static const int kUnassigned = -1;
+  SmallVector<SmallVector<unsigned>> dupeIndexMaps(yieldOps.size());
+  for (auto yieldOp : llvm::enumerate(yieldOps)) {
+    auto &dupeIndexMap = dupeIndexMaps[yieldOp.index()];
+    dupeIndexMap.resize(resultCount, kUnassigned);
+    auto operands = yieldOp.value().getClosureResultsMutable();
+    for (unsigned i = 0; i < operands.size(); ++i) {
+      for (unsigned j = 0; j < i; ++j) {
+        if (operands[j].get() == operands[i].get()) {
+          dupeIndexMap[i] = j;
+          break;
+        }
+      }
+    }
+  }
+
+  // Per-result now find which are consistently duplicated.
+  // Note that we may have multiple yield ops and we have to ensure that one
+  // returning duplicates does not influence others that may not be.
+  llvm::BitVector sameValues(resultCount);
+  llvm::BitVector deadResultsMap(resultCount);
+  auto uniformDupeIndexMap =
+      llvm::to_vector(llvm::seq(0u, resultCount)); // old -> new
+  for (unsigned idx = 0; idx < resultCount; ++idx) {
+    if (deadResultsMap.test(idx))
+      continue;
+    // Each bit represents a result that duplicates the result at idx.
+    // We walk all the sites and AND their masks together to get the safe
+    // set of duplicate results.
+    // Example for %0: yield %a, %b, %a -> b001
+    // Example for %1: yield %a, %b, %a -> b000
+    sameValues.set(); // note reused
+    for (auto &dupeIndexMap : dupeIndexMaps) {
+      for (unsigned i = 0; i < resultCount; ++i) {
+        if (i == idx || dupeIndexMap[i] != idx) {
+          sameValues.reset(i);
+        }
+      }
+    }
+    if (sameValues.none()) {
+      uniformDupeIndexMap[idx] = idx;
+      continue;
+    }
+    deadResultsMap |= sameValues;
+    uniformDupeIndexMap[idx] = idx;
+    for (auto dupeIdx : sameValues.set_bits()) {
+      uniformDupeIndexMap[dupeIdx] = idx;
+    }
+  }
+  return uniformDupeIndexMap;
 }
 
 // Returns true if |constantOp| represents a (logically) small constant value
@@ -131,19 +207,17 @@ static bool isConstantInlinable(const ClosureOptimizationOptions &options,
 
   auto constantValueAttr = constantOp.getValue();
   auto constantType = constantOp.getType();
-  if (constantValueAttr.isa<SplatElementsAttr>()) {
+  if (llvm::isa<SplatElementsAttr>(constantValueAttr)) {
     // Splats are always small and can often have special handling when we
     // know they are a splat - which is why it's so important we inline them
     // here so we know when they are used that's the case.
     return true;
-  } else if (auto denseAttr = constantValueAttr.dyn_cast<DenseElementsAttr>()) {
+  } else if (auto attr = llvm::dyn_cast<ElementsAttr>(constantValueAttr)) {
     // Smallish constants are worth moving inside.
-    auto shapedType = constantType.cast<ShapedType>();
+    auto shapedType = llvm::cast<ShapedType>(constantType);
     uint64_t estimatedByteLength =
-        shapedType.getNumElements() *
-        getRoundedElementByteWidth(shapedType.getElementType());
-    return denseAttr.isSplat() ||
-           estimatedByteLength <= maxInlinedConstantBytes;
+        IREE::Util::getRoundedPhysicalStorageSize(shapedType);
+    return attr.isSplat() || estimatedByteLength <= maxInlinedConstantBytes;
   } else if (constantType.isIntOrIndexOrFloat()) {
     // Primitives can always go in.
     return true;
@@ -183,13 +257,15 @@ static void inlineClosureOperands(const ClosureOptimizationOptions &options,
   for (auto opArg : llvm::enumerate(closureOp.getClosureOperands())) {
     auto outerValue = opArg.value();
     auto *sourceOp = outerValue.getDefiningOp();
-    if (!sourceOp) continue;  // can't clone block arguments into closures
+    if (!sourceOp)
+      continue; // can't clone block arguments into closures
 
     // We cannot just simply inline and replace all users if this is an
     // argument that can be written; for example, the region might perform
     // work after loading a initial constant from the argument and then
     // write back.
-    if (!closureOp.getOperandAccess(opArg.index()).isReadOnly()) continue;
+    if (!closureOp.getOperandAccess(opArg.index()).isReadOnly())
+      continue;
 
     if (closureOp.canClosureContainOp(sourceOp) &&
         shouldInlineIntoClosure(options, outerValue)) {
@@ -226,37 +302,50 @@ LogicalResult optimizeClosureLikeOp(const ClosureOptimizationOptions &options,
   inlineClosureOperands(options, closureOp, entryBlock, rewriter);
 
   // Build data structure for unused operand elision.
-  SmallVector<unsigned, 4> elidedOperands;
+  SmallVector<unsigned> elidedOperands;
   llvm::SmallMapVector<Value, BlockArgument, 8> argToBlockMap;
   SmallVector<std::optional<BlockArgument>, 8> blockArgReplacements(
       entryBlock.getNumArguments());
   for (auto opArg : llvm::enumerate(closureOp.getClosureOperands())) {
     auto blockArg = entryBlock.getArgument(opArg.index());
     if (blockArg.use_empty()) {
-      // Not used - Drop.
+      // Not used - drop.
       elidedOperands.push_back(opArg.index());
       blockArgReplacements[opArg.index()] = BlockArgument();
       continue;
     }
     auto existingIt = argToBlockMap.find(opArg.value());
     if (existingIt == argToBlockMap.end()) {
-      // Not found - Record for deduping.
+      // Not found - record for deduping.
       argToBlockMap.insert(std::make_pair(opArg.value(), blockArg));
     } else {
-      // Found - Replace.
+      // Found - replace.
       elidedOperands.push_back(opArg.index());
       blockArgReplacements[opArg.index()] = existingIt->second;
     }
   }
 
-  // Check for unused results.
-  SmallVector<Value, 4> preservedResults;
-  SmallVector<unsigned, 4> elidedResults;
+  // Find duplicate results (where all yield sites return a duplicate value) as
+  // a map from result index to the result index it is a duplicate of. Results
+  // that are not duplicates (or are the base value) have an identity entry.
+  auto duplicateResultMap =
+      findDuplicateRegionResults(closureOp.getClosureBodyRegion());
+
+  // Check for unused or duplicate results.
+  SmallVector<Value> preservedResults;
+  SmallVector<unsigned> elidedResults;
+  SmallVector<std::pair<Value, Value>> resultReplacements;
   for (auto result : llvm::enumerate(closureOp.getClosureResults())) {
     // You can drop a result if the use is empty and not read via a tie.
     auto access = closureOp.getResultAccess(result.index());
     if (result.value().use_empty() && !access.isRead) {
       elidedResults.push_back(result.index());
+    } else if (!duplicateResultMap.empty() &&
+               duplicateResultMap[result.index()] != result.index()) {
+      elidedResults.push_back(result.index());
+      resultReplacements.push_back(std::make_pair(
+          result.value(),
+          closureOp.getClosureResults()[duplicateResultMap[result.index()]]));
     } else {
       preservedResults.push_back(result.value());
     }
@@ -285,6 +374,12 @@ LogicalResult optimizeClosureLikeOp(const ClosureOptimizationOptions &options,
       rewriter.replaceAllUsesWith(entryBlock.getArgument(replacement.index()),
                                   *replacement.value());
     }
+  }
+
+  // Replace duplicate results prior to cloning - the SSA values will no longer
+  // exist afterward.
+  for (auto [oldResult, newResult] : resultReplacements) {
+    rewriter.replaceAllUsesWith(oldResult, newResult);
   }
 
   // Clone the op with the elidable operands and results removed.
@@ -320,7 +415,4 @@ LogicalResult optimizeClosureLikeOp(const ClosureOptimizationOptions &options,
   return success();
 }
 
-}  // namespace Util
-}  // namespace IREE
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler::IREE::Util

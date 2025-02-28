@@ -5,9 +5,10 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 load("//build_tools/bazel:build_defs.oss.bzl", "iree_cmake_extra_content", "iree_runtime_cc_library", "iree_runtime_cc_test")
-load("//build_tools/bazel:iree_bytecode_module.bzl", "iree_bytecode_module")
 load("//build_tools/bazel:cc_binary_benchmark.bzl", "cc_binary_benchmark")
 # load(//build_tools/bazel:build_defs.oss.bzl, "iree_gentbl_cc_library")
+
+load("//build_tools/bazel:iree_bytecode_module.bzl", "iree_bytecode_module")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -38,7 +39,6 @@ iree_runtime_cc_library(
     ],
     deps = [
         "//runtime/src/iree/base",
-        "//runtime/src/iree/base:tracing",
         "//runtime/src/iree/base/internal",
         "//runtime/src/iree/vm",
         "//runtime/src/iree/vm:ops",
@@ -88,9 +88,9 @@ cc_binary_benchmark(
         ":module",
         ":module_benchmark_module_c",
         "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:benchmark",
         "//runtime/src/iree/testing:benchmark_main",
         "//runtime/src/iree/vm",
-        "@com_google_benchmark//:benchmark",
     ],
 )
 

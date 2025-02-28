@@ -16,14 +16,16 @@ iree_compiler_cc_library(
     name = "UtilToVM",
     srcs = [
         "ConvertAlignmentOps.cpp",
+        "ConvertAssignmentOps.cpp",
         "ConvertBufferOps.cpp",
         "ConvertGlobalOps.cpp",
         "ConvertListOps.cpp",
         "ConvertStatusOps.cpp",
-        "ConvertUtilToVM.cpp",
+        "ConvertStructuralOps.cpp",
+        "Patterns.cpp",
     ],
     hdrs = [
-        "ConvertUtilToVM.h",
+        "Patterns.h",
     ],
     deps = [
         "//compiler/src/iree/compiler/Dialect/Util/IR",
@@ -31,6 +33,7 @@ iree_compiler_cc_library(
         "//compiler/src/iree/compiler/Dialect/VM/IR",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:TransformUtils",

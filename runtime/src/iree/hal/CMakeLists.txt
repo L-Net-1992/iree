@@ -23,6 +23,8 @@ iree_cc_library(
     "buffer.h"
     "buffer_heap.c"
     "buffer_heap_impl.h"
+    "buffer_transfer.c"
+    "buffer_transfer.h"
     "buffer_view.c"
     "buffer_view.h"
     "buffer_view_util.c"
@@ -50,8 +52,9 @@ iree_cc_library(
     "executable_cache.h"
     "fence.c"
     "fence.h"
-    "pipeline_layout.c"
-    "pipeline_layout.h"
+    "file.c"
+    "file.h"
+    "queue.h"
     "resource.h"
     "semaphore.c"
     "semaphore.h"
@@ -59,11 +62,10 @@ iree_cc_library(
     "string_util.h"
   DEPS
     iree::base
-    iree::base::core_headers
     iree::base::internal
     iree::base::internal::path
     iree::base::internal::synchronization
-    iree::base::tracing
+    iree::io::file_handle
   PUBLIC
 )
 

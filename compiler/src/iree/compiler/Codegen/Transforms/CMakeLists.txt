@@ -22,23 +22,28 @@ iree_cc_library(
   DEPS
     LLVMSupport
     MLIRAffineDialect
+    MLIRAffineTransforms
     MLIRAffineUtils
     MLIRAnalysis
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRLinalgDialect
     MLIRLinalgTransforms
     MLIRMemRefDialect
     MLIRPass
+    MLIRSCFTransforms
     MLIRSupport
+    MLIRTensorDialect
+    MLIRTransformUtils
     MLIRTransforms
     MLIRValueBoundsOpInterface
     MLIRVectorDialect
+    iree::compiler::Codegen::Dialect::Codegen::IR::IREECodegenDialect
     iree::compiler::Codegen::Utils
     iree::compiler::Dialect::Flow::IR
     iree::compiler::Dialect::HAL::IR
-    iree::compiler::Dialect::VMVX::IR
   PUBLIC
 )
 

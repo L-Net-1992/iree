@@ -127,8 +127,9 @@ class CustomModuleState final {
       // Passed in refs may be null.
       return iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "null string arg");
     }
-    fprintf(stdout, "LENGTH %.*s = %zu\n", static_cast<int>(string->value.size),
-            string->value.data, string->value.size);
+    fprintf(stdout, "LENGTH %.*s = %" PRIhsz "\n",
+            static_cast<int>(string->value.size), string->value.data,
+            string->value.size);
     fflush(stdout);
     return static_cast<int64_t>(string->value.size);
   }
@@ -190,6 +191,15 @@ class CustomModule final : public vm::NativeModule<CustomModuleState> {
       iree_allocator_t allocator) override {
     auto state = std::make_unique<CustomModuleState>(allocator);
     return state;
+  }
+
+  // Forks a parent state into a child state, preserving any module state
+  // by-reference.
+  StatusOr<std::unique_ptr<CustomModuleState>> ForkState(
+      CustomModuleState* parent_state,
+      iree_allocator_t host_allocator) override {
+    // No special state to preserve.
+    return CreateState(host_allocator);
   }
 };
 

@@ -32,29 +32,11 @@ iree_td_library(
         "@llvm-project//mlir:CallInterfacesTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:FunctionInterfacesTdFiles",
+        "@llvm-project//mlir:InferIntRangeInterfaceTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
-    ],
-)
-
-iree_compiler_cc_library(
-    name = "ExternalModels",
-    srcs = [
-        "UtilExternalModels.cpp",
-    ],
-    hdrs = [
-        "UtilExternalModels.h",
-    ],
-    deps = [
-        ":IR",
-        "//llvm-external-projects/iree-dialects:IREELinalgExtDialect",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:LinalgDialect",
-        "@llvm-project//mlir:LinalgStructuredOpsIncGen",
-        "@llvm-project//mlir:MLProgramDialect",
-        "@llvm-project//mlir:TensorDialect",
     ],
 )
 
@@ -80,6 +62,8 @@ iree_compiler_cc_library(
         "UtilAttrs.h.inc",
         "UtilAttrInterfaces.cpp.inc",
         "UtilAttrInterfaces.h.inc",
+        "UtilEnums.cpp.inc",
+        "UtilEnums.h.inc",
         "UtilOpInterfaces.cpp.inc",
         "UtilOpInterfaces.h.inc",
         "UtilOps.cpp.inc",
@@ -95,17 +79,22 @@ iree_compiler_cc_library(
         ":UtilOpsGen",
         ":UtilTypesGen",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CastInterfaces",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:InferTypeOpInterface",
+        "@llvm-project//mlir:InliningUtils",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:ViewLikeInterface",
     ],
@@ -121,6 +110,14 @@ iree_gentbl_cc_library(
         (
             ["--gen-attrdef-defs"],
             "UtilAttrs.cpp.inc",
+        ),
+        (
+            ["--gen-enum-decls"],
+            "UtilEnums.h.inc",
+        ),
+        (
+            ["--gen-enum-defs"],
+            "UtilEnums.cpp.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",

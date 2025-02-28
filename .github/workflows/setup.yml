@@ -3,7 +3,7 @@
 # Licensed under the Apache License v2.0 with LLVM Exceptions.
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-#
+
 # Sets up a github workflow.
 # It is designed to be called from a parent workflow.
 # The concurrency of this workflow is controlled by the caller's job.
@@ -13,10 +13,10 @@ name: Setup
 on:
   workflow_call:
     outputs:
-      should-run:
+      enabled-jobs:
         description: |
-          Whether CI should run.
-        value: ${{ jobs.setup.outputs.should-run }}
+          Which jobs should run.
+        value: ${{ jobs.setup.outputs.enabled-jobs }}
       is-pr:
         description: |
           Whether the workflow has been triggered by a pull request.
@@ -33,37 +33,26 @@ on:
         description: |
           Whether to write to caches.
         value: ${{ jobs.setup.outputs.write-caches }}
-      benchmark-presets:
-        description: |
-          A comma-separated string of benchmarks to run.
-        value: ${{ jobs.setup.outputs.benchmark-presets }}
 
-
-env:
-  # This duplicates the variable from ci.yml. The variable needs to be in env
-  # instead of the outputs of setup because it contains the run attempt and we
-  # want that to be the current attempt, not whatever attempt the setup step
-  # last ran in. It therefore can't be passed in via inputs because the env
-  # context isn't available there.
-  GCS_DIR: gs://iree-github-actions-${{ github.event_name == 'pull_request' && 'presubmit' || 'postsubmit' }}-artifacts/${{ github.run_id }}/${{ github.run_attempt }}
+permissions:
+  contents: read
 
 jobs:
   setup:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     env:
       # The commit being checked out is the merge commit for the PR. Its first
       # parent will be the tip of main.
       BASE_REF: HEAD^
     outputs:
-      should-run: ${{ steps.configure.outputs.should-run }}
+      enabled-jobs: ${{ steps.configure.outputs.enabled-jobs }}
       is-pr: ${{ steps.configure.outputs.is-pr }}
       runner-env: ${{ steps.configure.outputs.runner-env }}
       runner-group: ${{ steps.configure.outputs.runner-group }}
       write-caches: ${{ steps.configure.outputs.write-caches }}
-      benchmark-presets: ${{ steps.configure.outputs.benchmark-presets }}
     steps:
       - name: "Checking out repository"
-        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # We need the parent commit to do a diff
           fetch-depth: 2
@@ -73,7 +62,7 @@ jobs:
         # possible to update the trailers, labels on the pull request and re-run
         # the workflow to make them take effect.
         # This is majorly for triggering benchmarks without pushing new commits.
-        # See https://github.com/openxla/iree/issues/10042#issuecomment-1449250094
+        # See https://github.com/iree-org/iree/issues/10042#issuecomment-1449250094
         # for more details.
         id: fetch-pr
         if: github.event_name == 'pull_request'
@@ -111,9 +100,9 @@ jobs:
 
           ./build_tools/github_actions/configure_ci.py
 
-      - name: "Show benchmark presets"
+      - name: "Show enabled options"
         env:
-          BENCHMARK_PRESETS: ${{ steps.configure.outputs.benchmark-presets }}
+          ENABLED_JOBS: ${{ join(fromJson(steps.configure.outputs.enabled-jobs)) || 'None' }}
         run: |
-          echo ":stopwatch: Enabled benchmarks: \`${BENCHMARK_PRESETS}\`" \
-            >> "${GITHUB_STEP_SUMMARY}"
+          echo ":green_circle: Enabled jobs: \`${ENABLED_JOBS}\`" \
+              >> "${GITHUB_STEP_SUMMARY}"

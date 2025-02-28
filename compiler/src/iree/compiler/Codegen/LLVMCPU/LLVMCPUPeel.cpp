@@ -4,48 +4,55 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/Codegen/PassDetail.h"
-#include "iree/compiler/Codegen/Passes.h"
+#include "iree/compiler/Codegen/LLVMCPU/Passes.h"
+#include "iree/compiler/Codegen/Utils/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/SCF/Transforms/Transforms.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "iree-llvmcpu-peel"
 
-namespace mlir {
-namespace iree_compiler {
+namespace mlir::iree_compiler {
+
+#define GEN_PASS_DEF_LLVMCPUPEELPASS
+#include "iree/compiler/Codegen/LLVMCPU/Passes.h.inc"
+
 namespace {
+
 // Gathers tiled loops that aren't distribution loops from previous tiling
 // stages.
-void collectLoopsToPeel(RewriterBase &rewriter, Operation *op,
-                        SmallVectorImpl<scf::ForOp> &loopsToPeel) {
-  if (!iree_compiler::getLoweringConfig(op)) return;
+void collectLoopsToPeel(Operation *op,
+                        llvm::SmallSetVector<scf::ForOp, 8> &loopsToPeel) {
+  if (!iree_compiler::getLoweringConfig(op))
+    return;
 
   int maxNumLoopsToPeel = TypeSwitch<Operation *, int>(op)
                               .Case<linalg::LinalgOp>([](auto linalgOp) {
                                 return linalgOp.getNumLoops();
                               })
-                              .Case<tensor::PackOp>([](auto packOp) {
+                              .Case<linalg::PackOp>([](auto packOp) {
                                 return packOp.getSourceRank();
                               })
                               .Default([](auto) { return 0; });
   for (int i = 0; i < maxNumLoopsToPeel; ++i) {
     op = op->getParentOfType<scf::ForOp>();
     auto loop = llvm::cast_or_null<scf::ForOp>(op);
-    if (!loop || iree_compiler::isTiledAndDistributedLoop(loop)) break;
-    loopsToPeel.push_back(loop);
-  }
+    if (!loop || iree_compiler::isTiledAndDistributedLoop(loop))
+      break;
 
-  std::reverse(loopsToPeel.begin(), loopsToPeel.end());
+    LLVM_DEBUG(llvm::dbgs() << "Loop to peel:\n" << *op << "\n");
+    loopsToPeel.insert(loop);
+  }
 }
 
-class LLVMCPUPeelPass : public LLVMCPUPeelBase<LLVMCPUPeelPass> {
- public:
+class LLVMCPUPeelPass : public impl::LLVMCPUPeelPassBase<LLVMCPUPeelPass> {
+public:
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<tensor::TensorDialect, linalg::LinalgDialect,
                     scf::SCFDialect>();
@@ -56,39 +63,35 @@ class LLVMCPUPeelPass : public LLVMCPUPeelBase<LLVMCPUPeelPass> {
 void LLVMCPUPeelPass::runOnOperation() {
   MLIRContext *context = &getContext();
   auto funcOp = getOperation();
-  SmallVector<Operation *> candidates;
+
+  llvm::SmallSetVector<scf::ForOp, 8> uniqueLoopsToPeel;
   funcOp.walk([&](Operation *op) {
-    if (isa<linalg::LinalgOp, tensor::PackOp>(op)) {
-      candidates.push_back(op);
+    if (isa<linalg::LinalgOp, linalg::PackOp>(op)) {
+      LLVM_DEBUG(llvm::dbgs() << "Gather loops to peel from candidate op:\n"
+                              << *op << "\n");
+      collectLoopsToPeel(op, uniqueLoopsToPeel);
     }
   });
-  for (auto op : candidates) {
-    LLVM_DEBUG(llvm::dbgs() << "candidate: " << op << "\n");
 
-    IRRewriter rewriter(context);
-    IRRewriter::InsertionGuard g(rewriter);
-    rewriter.setInsertionPointAfter(op);
+  LLVM_DEBUG(llvm::dbgs() << "Peeling loops\n");
+  // Visiting the loops in outer-to-inner order will prevent loops nested in
+  // partial iterations to be peeled again.
+  SmallVector<scf::ForOp, 8> outerToInnerLoopsToPeel(uniqueLoopsToPeel.rbegin(),
+                                                     uniqueLoopsToPeel.rend());
+  IRRewriter rewriter(context);
+  linalg::peelLoops(rewriter, outerToInnerLoopsToPeel);
 
-    SmallVector<scf::ForOp> loopsToPeel;
-    collectLoopsToPeel(rewriter, op, loopsToPeel);
-    linalg::peelLoops(rewriter, loopsToPeel);
-  }
-
+  LLVM_DEBUG(llvm::dbgs() << "Canonicalizing loops\n");
   RewritePatternSet patterns(context);
   linalg::populateLinalgTilingCanonicalizationPatterns(patterns);
   scf::populateSCFForLoopCanonicalizationPatterns(patterns);
-  memref::populateResolveRankedShapeTypeResultDimsPatterns(patterns);
+  memref::populateResolveRankedShapedTypeResultDimsPatterns(patterns);
   context->getLoadedDialect<tensor::TensorDialect>()
       ->getCanonicalizationPatterns(patterns);
-  if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     LLVM_DEBUG(llvm::dbgs() << "----- cleanup failed -----\n");
     return signalPassFailure();
   }
 }
-}  // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>> createLLVMCPUPeelPass() {
-  return std::make_unique<LLVMCPUPeelPass>();
-}
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace
+} // namespace mlir::iree_compiler

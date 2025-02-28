@@ -5,15 +5,23 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 #include "iree/compiler/Preprocessing/Passes.h"
 
+#include "iree/compiler/Dialect/Util/IR/UtilOps.h"
+#include "iree/compiler/DispatchCreation/Passes.h"
+#include "iree/compiler/GlobalOptimization/Passes.h"
 #include "iree/compiler/Preprocessing/Common/Passes.h"
+#include "iree/compiler/Utils/PassUtils.h"
 #include "llvm/Support/Debug.h"
+#include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
+#include "mlir/Transforms/Passes.h"
 
 #define DEBUG_TYPE "iree-preprocessing-pass-pipeline"
 
-namespace mlir {
-namespace iree_compiler {
-namespace IREE {
+namespace mlir::iree_compiler::Preprocessing {
+
+using FunctionLikeNest =
+    MultiOpNest<IREE::Util::InitializerOp, IREE::Util::FuncOp>;
 
 namespace {
 
@@ -54,25 +62,67 @@ void extendWithTextPipeline(OpPassManager &passManager,
   });
 }
 
-}  // namespace
+} // namespace
 
 void buildPreprocessingPassPipeline(
     OpPassManager &passManager,
     const PreprocessingOptions &preprocessingOptions,
     PipelineExtensions *pipelineExtensions) {
   auto pipelineStr = preprocessingOptions.preprocessingPassPipeline;
-  if (!preprocessingOptions.preprocessingPassPipeline.empty()) {
-    extendWithTextPipeline(passManager,
-                           preprocessingOptions.preprocessingPassPipeline);
+  if (!pipelineStr.empty()) {
+    extendWithTextPipeline(passManager, pipelineStr);
   }
 
   if (pipelineExtensions) {
     pipelineExtensions->extendPreprocessingPassPipeline(passManager);
   }
+
+  if (!preprocessingOptions.preprocessingTransformSpecFilename.empty()) {
+    Preprocessing::InterpreterPassOptions interpreterOptions;
+    interpreterOptions.transformSpecPath =
+        preprocessingOptions.preprocessingTransformSpecFilename;
+    passManager.addPass(
+        Preprocessing::createInterpreterPass(interpreterOptions));
+  }
+
+  if (!preprocessingOptions.preprocessingPDLSpecFilename.empty()) {
+    Preprocessing::ApplyPDLPatternsPassOptions applyPDLPatternsOptions;
+    applyPDLPatternsOptions.patternsFile =
+        preprocessingOptions.preprocessingPDLSpecFilename;
+    passManager.addPass(
+        Preprocessing::createApplyPDLPatternsPass(applyPDLPatternsOptions));
+    passManager.addPass(createCanonicalizerPass());
+    passManager.addPass(createCSEPass());
+  }
 }
 
-void registerPreprocessingPasses() { registerCommonPreprocessingPasses(); }
+static void
+buildTransposeConvolutionPassPipeline(OpPassManager &passManager,
+                                      const TransformOptions &options) {
+  FunctionLikeNest(passManager)
+      .addPass(GlobalOptimization::createDetachElementwiseFromNamedOpsPass)
+      .addPass(mlir::createLinalgNamedOpConversionPass)
+      .addPass(GlobalOptimization::createConvert1X1FilterConv2DToMatmulPass)
+      .addPass(createConvertConvToChannelsLastPass)
+      .addPass(createConvertConvFilterToChannelsLastPass);
+  passManager.addPass(DispatchCreation::createFoldUnitExtentDimsPass());
+  passManager.addPass(createCanonicalizerPass());
+  passManager.addPass(createCSEPass());
+}
 
-}  // namespace IREE
-}  // namespace iree_compiler
-}  // namespace mlir
+void registerPreprocessingPasses() {
+  registerCommonPreprocessingPasses();
+
+  PassPipelineRegistration<TransformOptions>
+      globalOptimizationTransformPassPipeline(
+          "iree-preprocessing-transpose-convolution-pipeline",
+          "Runs a pass pipeline for transposing and canonicalizing "
+          "convolutions",
+          [](OpPassManager &passManager,
+             const TransformOptions &transformOptions) {
+            buildTransposeConvolutionPassPipeline(passManager,
+                                                  transformOptions);
+          });
+}
+
+} // namespace mlir::iree_compiler::Preprocessing

@@ -6,8 +6,6 @@
 
 #include "iree/hal/utils/libmpi.h"
 
-#include "iree/base/tracing.h"
-
 //===----------------------------------------------------------------------===//
 // Dynamic symbol table
 //===----------------------------------------------------------------------===//
@@ -36,9 +34,9 @@ iree_status_t iree_hal_mpi_library_load(
 
   static const char* kMPILoaderSearchNames[] = {
 #if defined(IREE_PLATFORM_WINDOWS)
-    "msmpi.dll",
+      "msmpi.dll",
 #else
-    "libmpi.so",
+      "libmpi.so",
 #endif  // IREE_PLATFORM_WINDOWS
   };
 

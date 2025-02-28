@@ -14,22 +14,44 @@ iree_cc_library(
   NAME
     Utils
   HDRS
+    "LLVMGPUSelectUKernels.h"
     "LLVMGPUUtils.h"
   SRCS
-    "LLVMGPULayoutAnalysisAndDistribution.cpp"
+    "LLVMGPUSelectUKernels.cpp"
     "LLVMGPUUtils.cpp"
+    "PrefetchSharedMemoryCopy.cpp"
   DEPS
+    LLVMExecutionEngine
+    LLVMIRReader
+    LLVMInterpreter
     LLVMSupport
+    MLIRAMDGPUDialect
     MLIRAffineDialect
     MLIRArithDialect
     MLIRFuncDialect
-    MLIRGPUOps
+    MLIRFunctionInterfaces
+    MLIRGPUDialect
     MLIRIR
+    MLIRLinalgDialect
     MLIRMathDialect
     MLIRMemRefDialect
     MLIRNVGPUDialect
+    MLIRSCFDialect
+    MLIRSCFTransforms
+    MLIRSideEffectInterfaces
+    MLIRSupport
     MLIRVectorDialect
+    iree::compiler::Codegen::Common
+    iree::compiler::Codegen::Common::GPU::CommonGPUPasses
+    iree::compiler::Codegen::Common::VectorLayoutAnalysis
+    iree::compiler::Codegen::Dialect::GPU::IR::IREEGPUDialect
+    iree::compiler::Codegen::Dialect::VectorExt::IR::IREEVectorExtDialect
+    iree::compiler::Codegen::Transforms
     iree::compiler::Codegen::Utils
+    iree::compiler::Codegen::Utils::VectorOpUtils
+    iree::compiler::Dialect::HAL::IR
+    iree::compiler::Dialect::LinalgExt::Utils
+    iree::compiler::Utils
   PUBLIC
 )
 

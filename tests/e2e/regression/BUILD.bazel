@@ -8,8 +8,8 @@
 # These should focus on support by IREE itself, not for issues with specific runner tools.
 # Place those tests in tools/test/
 
-load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 load("//build_tools/bazel:iree_check_test.bzl", "iree_check_single_backend_test_suite")
+load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 
 package(
     features = ["layering_check"],
@@ -28,6 +28,7 @@ BACKEND_TESTS = [
     "i1_inlined_constant.mlir",
     "linalg_ops.mlir",
     "reduction_broadcast_elementwise.mlir",
+    "scalar_computation.mlir",
     "softmax.mlir",
     "strided_slice.mlir",
     "transpose.mlir",
@@ -37,6 +38,7 @@ iree_lit_test_suite(
     name = "lit",
     srcs = [
         "fill_i64.mlir",
+        "force_single_dispatch.mlir",
         "globals.mlir",
         "libm_linking.mlir",
         "scalar.mlir",
@@ -46,7 +48,6 @@ iree_lit_test_suite(
     cfg = "//tests:lit.cfg.py",
     tags = [
         "driver=local-task",
-        "driver=vulkan",
         "hostonly",
     ],
     tools = [
@@ -58,15 +59,29 @@ iree_lit_test_suite(
 )
 
 iree_check_single_backend_test_suite(
-    name = "check_regression_llvm-cpu",
+    name = "check_fp_reassoc_regression_llvm-cpu",
     srcs = [
         "associative_reordering.mlir",
+    ],
+    compiler_flags = [
+        "--iree-llvmcpu-reassociate-fp-reductions=false",
+        "--iree-llvmcpu-target-cpu=generic",
+    ],
+    driver = "local-task",
+    input_type = "stablehlo",
+    target_backend = "llvm-cpu",
+)
+
+iree_check_single_backend_test_suite(
+    name = "check_regression_llvm-cpu",
+    srcs = [
         "layernorm.mlir",
         "lowering_config.mlir",
         "pack_pad_transpose_1x9_into_2x4x8x4_issue_12546.mlir",
     ] + BACKEND_TESTS,
-    compiler_flags = ["--iree-input-type=mhlo"],
+    compiler_flags = ["--iree-llvmcpu-target-cpu=generic"],
     driver = "local-task",
+    input_type = "stablehlo",
     target_backend = "llvm-cpu",
 )
 
@@ -78,8 +93,9 @@ iree_check_single_backend_test_suite(
         # so this tests provides e2e coverage for that pass.
         "linalg_quantized_matmul_vs_linalg_matmul.mlir",
     ],
-    compiler_flags = ["--iree-input-type=tosa"],
+    compiler_flags = ["--iree-llvmcpu-target-cpu=generic"],
     driver = "local-task",
+    input_type = "tosa",
     target_backend = "llvm-cpu",
 )
 
@@ -88,8 +104,8 @@ iree_check_single_backend_test_suite(
     srcs = [
         "layernorm.mlir",
     ] + BACKEND_TESTS,
-    compiler_flags = ["--iree-input-type=mhlo"],
     driver = "local-task",
+    input_type = "stablehlo",
     target_backend = "vmvx",
 )
 
@@ -97,8 +113,8 @@ iree_check_single_backend_test_suite(
     name = "check_regression_vulkan-spirv",
     # TODO(#10024): Fix layernorm.mlir on Pixel 6 and put in BACKEND_TESTS.
     srcs = BACKEND_TESTS,
-    compiler_flags = ["--iree-input-type=mhlo"],
     driver = "vulkan",
+    input_type = "stablehlo",
     target_backend = "vulkan-spirv",
 )
 
@@ -108,8 +124,8 @@ iree_check_single_backend_test_suite(
         "large_reduction.mlir",
         "layernorm.mlir",
     ] + BACKEND_TESTS,
-    compiler_flags = ["--iree-input-type=mhlo"],
     driver = "cuda",
+    input_type = "stablehlo",
     tags = [
         # CUDA cuInit fails with sanitizer on.
         "noasan",
@@ -128,7 +144,7 @@ iree_check_single_backend_test_suite(
         "softmax_large.mlir",
     ],
     compiler_flags = [
-        "--iree-flow-fuse-multi-use",
+        "--iree-dispatch-creation-fuse-multi-use",
     ],
     driver = "cuda",
     tags = [
@@ -147,7 +163,10 @@ iree_check_single_backend_test_suite(
     srcs = [
         "disable_demote_f64_to_f32.mlir",
     ],
-    compiler_flags = ["-iree-flow-demote-f64-to-f32=false"],
+    compiler_flags = [
+        "--iree-input-demote-f64-to-f32=false",
+        "--iree-llvmcpu-target-cpu=generic",
+    ],
     driver = "local-task",
     target_backend = "llvm-cpu",
 )
@@ -158,7 +177,8 @@ iree_check_single_backend_test_suite(
         "softmax.mlir",
     ],
     compiler_flags = [
-        "--iree-flow-fuse-multi-use",
+        "--iree-dispatch-creation-fuse-multi-use",
+        "--iree-llvmcpu-target-cpu=generic",
     ],
     driver = "local-task",
     target_backend = "llvm-cpu",
@@ -174,11 +194,10 @@ iree_check_single_backend_test_suite(
     srcs = [
         "dynamic_matmuls_on_same_accumulator_issue_12060.mlir",
         "dynamic_tosa_clamp.mlir",
-        "dynamic_tosa_quantized_fully_connected_issue_10859.mlir",
     ],
     compiler_flags = [
-        "--iree-input-type=tosa",
         "--iree-vmvx-enable-microkernels",
     ],
+    input_type = "tosa",
     target_backend = "vmvx",
 )

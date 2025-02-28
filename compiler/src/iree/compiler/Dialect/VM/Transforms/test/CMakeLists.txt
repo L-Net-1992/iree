@@ -16,9 +16,11 @@ iree_lit_test_suite(
   SRCS
     "deduplicate_rodata.mlir"
     "drop_empty_module_initializers.mlir"
+    "drop_unused_calls.mlir"
     "global_initialization.mlir"
     "hoist_inlined_rodata.mlir"
     "ordinal_allocation.mlir"
+    "reify_rodata_tables.mlir"
     "resolve_rodata_loads.mlir"
     "sink_defining_ops.mlir"
   TOOLS

@@ -4,8 +4,8 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
+load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 
 package(
     features = ["layering_check"],
@@ -18,9 +18,11 @@ iree_lit_test_suite(
         [
             "deduplicate_rodata.mlir",
             "drop_empty_module_initializers.mlir",
+            "drop_unused_calls.mlir",
             "global_initialization.mlir",
             "hoist_inlined_rodata.mlir",
             "ordinal_allocation.mlir",
+            "reify_rodata_tables.mlir",
             "resolve_rodata_loads.mlir",
             "sink_defining_ops.mlir",
         ],

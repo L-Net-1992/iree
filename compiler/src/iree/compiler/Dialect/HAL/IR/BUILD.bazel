@@ -22,6 +22,7 @@ iree_td_library(
     name = "td_files",
     srcs = enforce_glob(
         [
+            "HALAttrs.td",
             "HALBase.td",
             "HALDialect.td",
             "HALInterfaces.td",
@@ -34,6 +35,8 @@ iree_td_library(
         "//compiler/src/iree/compiler/Dialect/Util/IR:td_files",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
         "@llvm-project//mlir:FuncTdFiles",
+        "@llvm-project//mlir:InferIntRangeInterfaceTdFiles",
+        "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
     ],
@@ -42,6 +45,7 @@ iree_td_library(
 iree_compiler_cc_library(
     name = "IR",
     srcs = [
+        "HALAttrs.cpp",
         "HALOpFolders.cpp",
         "HALOps.cpp",
         "HALTypes.cpp",
@@ -49,7 +53,6 @@ iree_compiler_cc_library(
     hdrs = [
         "HALDialect.h",
         "HALOps.h",
-        "HALTraits.h",
         "HALTypes.h",
     ],
     textual_hdrs = [
@@ -67,9 +70,9 @@ iree_compiler_cc_library(
         "HALTypeInterfaces.h.inc",
     ],
     deps = [
+        ":HALAttrsGen",
         ":HALInterfacesGen",
         ":HALOpsGen",
-        ":HALTypesGen",
         "//compiler/src/iree/compiler/Dialect/Stream/IR",
         "//compiler/src/iree/compiler/Dialect/Util/IR",
         "//compiler/src/iree/compiler/Utils",
@@ -77,9 +80,13 @@ iree_compiler_cc_library(
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:InferIntRangeInterface",
+        "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
@@ -93,19 +100,56 @@ iree_compiler_cc_library(
     hdrs = ["HALDialect.h"],
     deps = [
         ":IR",
+        "//compiler/src/iree/compiler/Dialect/Encoding/IR",
         "//compiler/src/iree/compiler/Dialect/HAL:hal_imports",
+        "//compiler/src/iree/compiler/Dialect/HAL/Analysis",
         "//compiler/src/iree/compiler/Dialect/HAL/Conversion/HALToVM",
+        "//compiler/src/iree/compiler/Dialect/Stream/IR",
         "//compiler/src/iree/compiler/Dialect/Util/IR",
         "//compiler/src/iree/compiler/Dialect/VM/Conversion",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:InliningUtils",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:TransformUtils",
     ],
+)
+
+iree_gentbl_cc_library(
+    name = "HALAttrsGen",
+    tbl_outs = [
+        (
+            [
+                "--gen-attrdef-decls",
+                "--attrdefs-dialect=hal",
+            ],
+            "HALAttrs.h.inc",
+        ),
+        (
+            [
+                "--gen-attrdef-defs",
+                "--attrdefs-dialect=hal",
+            ],
+            "HALAttrs.cpp.inc",
+        ),
+        (
+            ["--gen-enum-decls"],
+            "HALEnums.h.inc",
+        ),
+        (
+            ["--gen-enum-defs"],
+            "HALEnums.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "HALAttrs.td",
+    deps = [":td_files"],
 )
 
 iree_gentbl_cc_library(
@@ -155,37 +199,6 @@ iree_gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "HALOps.td",
-    deps = [":td_files"],
-)
-
-iree_gentbl_cc_library(
-    name = "HALTypesGen",
-    tbl_outs = [
-        (
-            [
-                "--gen-attrdef-decls",
-                "--attrdefs-dialect=hal",
-            ],
-            "HALAttrs.h.inc",
-        ),
-        (
-            [
-                "--gen-attrdef-defs",
-                "--attrdefs-dialect=hal",
-            ],
-            "HALAttrs.cpp.inc",
-        ),
-        (
-            ["--gen-enum-decls"],
-            "HALEnums.h.inc",
-        ),
-        (
-            ["--gen-enum-defs"],
-            "HALEnums.cpp.inc",
-        ),
-    ],
-    tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "HALBase.td",
     deps = [":td_files"],
 )
 

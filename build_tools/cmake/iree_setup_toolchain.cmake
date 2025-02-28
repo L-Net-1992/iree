@@ -22,6 +22,49 @@ endfunction()
 # explicitly or through global properties. Please don't add to it without
 # a very good reason.
 macro(iree_setup_toolchain)
+  #-------------------------------------------------------------------------------
+  # Force LTO compatible tools.
+  #-------------------------------------------------------------------------------
+
+  # On older (i.e. gcc 9.x era) systems, the compiler and system toolchains
+  # were not compatible for general LTO use, and they were further not
+  # compatible amongst themselves.
+  # As an aid to CIs, we provide an option which will force toolchain specific
+  # binutils and linkers only if running on Linux. This lets us use the same
+  # runtime build scripts across platforms without further shenanigans.
+  # This is a hack and should be rolled back once 2020 era systems are not in
+  # use.
+  # Users should not use this. If they have such an old system, configure CMake
+  # to use toolchain specific tools.
+  option(IREE_FORCE_LTO_COMPAT_BINUTILS_ON_LINUX "Forces use of toolchain specific LTO compatible binutils if on Linux" OFF)
+  mark_as_advanced(IREE_FORCE_LTO_COMPAT_BINUTILS_ON_LINUX)
+  if(IREE_FORCE_LTO_COMPAT_BINUTILS_ON_LINUX AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+      message(STATUS "Running on an old Linux with -DIREE_FORCE_LTO_COMPAT_BINUTILS_ON_LINUX: Forcing llvm-ar, llvm-nm, llvm-ranlib, and ld.lld")
+      find_program(IREE_CMAKE_LTO_AR llvm-ar REQUIRED)
+      find_program(IREE_CMAKE_LTO_RANLIB llvm-ranlib REQUIRED)
+      find_program(IREE_CMAKE_LTO_NM llvm-nm REQUIRED)
+      set(IREE_USE_LINKER "lld")
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      message(STATUS "Running on an old Linux with -DIREE_FORCE_LTO_COMPAT_BINUTILS_ON_LINUX: Forcing gcc-ar, gcc-nm, gcc-ranlib, and ld.gold")
+      find_program(IREE_CMAKE_LTO_AR gcc-ar REQUIRED)
+      find_program(IREE_CMAKE_LTO_RANLIB gcc-ranlib REQUIRED)
+      find_program(IREE_CMAKE_LTO_NM gcc-nm REQUIRED)
+      set(IREE_USE_LINKER "gold")
+    endif()
+
+    set(IREE_ENABLE_LLD OFF)
+    find_program(IREE_CMAKE_LTO_LD ld.${IREE_USE_LINKER} REQUIRED)
+    mark_as_advanced(IREE_CMAKE_LTO_AR IREE_CMAKE_LTO_RANLIB IREE_CMAKE_LTO_NM IREE_CMAKE_LTO_LD)
+
+    set(CMAKE_AR ${IREE_CMAKE_LTO_AR} CACHE FILEPATH "Forcing LTO ar instead of ar" FORCE)
+    set(CMAKE_AR ${IREE_CMAKE_LTO_AR})
+    set(CMAKE_NM ${IREE_CMAKE_LTO_NM} CACHE FILEPATH "Forcing LTO nm instead of nm" FORCE)
+    set(CMAKE_NM ${IREE_CMAKE_LTO_NM})
+    set(CMAKE_RANLIB ${IREE_CMAKE_LTO_RANLIB} CACHE FILEPATH "Forcing LTO ranlib instead of ranlib" FORCE)
+    set(CMAKE_RANLIB ${IREE_CMAKE_LTO_RANLIB})
+  endif()
+
   #-----------------------------------------------------------------------------
   # Supports dynamic library loading.
   #-----------------------------------------------------------------------------
@@ -109,8 +152,10 @@ macro(iree_setup_toolchain)
     # uninitialized memory. See the extensive description in that patch that
     # originally introduced it:
     # https://reviews.llvm.org/rG14daa20be1ad89639ec209d969232d19cf698845
-    string(APPEND CMAKE_CXX_FLAGS " -ftrivial-auto-var-init=pattern")
-    string(APPEND CMAKE_C_FLAGS " -ftrivial-auto-var-init=pattern")
+    if(NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
+      string(APPEND CMAKE_CXX_FLAGS " -ftrivial-auto-var-init=pattern")
+      string(APPEND CMAKE_C_FLAGS " -ftrivial-auto-var-init=pattern")
+    endif()
 
     # If doing any kind of shared library builds, then we have to link against
     # the shared libasan, and the user will be responsible for adding the
@@ -125,8 +170,18 @@ macro(iree_setup_toolchain)
     string(APPEND CMAKE_C_FLAGS " -fsanitize=memory")
   endif()
   if(IREE_ENABLE_TSAN)
-    string(APPEND CMAKE_CXX_FLAGS " -fsanitize=thread")
-    string(APPEND CMAKE_C_FLAGS " -fsanitize=thread")
+    iree_append_to_lists(
+      "-g -fno-omit-frame-pointer -fsanitize=thread"
+      CMAKE_CXX_FLAGS
+      CMAKE_C_FLAGS)
+    iree_append_to_lists(
+      "-fsanitize=thread"
+      CMAKE_SHARED_LINKER_FLAGS
+      CMAKE_EXE_LINKER_FLAGS
+      # We don't append to CMAKE_STATIC_LINKER_FLAGS, because object files are
+      # linked as an object library with llvm-ar and it does not have option
+      # -fsanitize=thread
+    )
   endif()
   if(IREE_ENABLE_UBSAN)
     string(APPEND CMAKE_CXX_FLAGS " -fsanitize=undefined")
@@ -185,6 +240,17 @@ macro(iree_setup_toolchain)
       set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> crT <TARGET> <LINK_FLAGS> <OBJECTS>")
     else()
       message(WARNING "Thin archives requested but not supported by ar")
+    endif()
+  endif()
+
+  # As of XCode 15, the default linker warns on duplicate libraries.
+  if(APPLE AND NOT IREE_USE_LINKER)
+    SET(_FLAG_NO_WARN_DUP_LIB "-Wl,-no_warn_duplicate_libraries")
+    check_linker_flag(CXX "${_FLAG_NO_WARN_DUP_LIB}"
+      IREE_LINKER_HAVE_NO_WARN_DUPLICATE_LIBRARIES)
+    if (IREE_LINKER_HAVE_NO_WARN_DUPLICATE_LIBRARIES)
+      string(APPEND CMAKE_EXE_LINKER_FLAGS " ${_FLAG_NO_WARN_DUP_LIB}")
+      string(APPEND CMAKE_SHARED_LINKER_FLAGS " ${_FLAG_NO_WARN_DUP_LIB}")
     endif()
   endif()
 endmacro()

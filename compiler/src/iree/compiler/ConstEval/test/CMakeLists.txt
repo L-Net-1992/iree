@@ -14,10 +14,16 @@ iree_lit_test_suite(
   NAME
     lit
   SRCS
+    "compile_regressions.mlir"
+    "failing.mlir"
     "jit_globals.mlir"
+    "jit_globals_vmvx_errors.mlir"
+    "scalar_values.mlir"
   TOOLS
     FileCheck
     iree-opt
+  TIMEOUT
+    300
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

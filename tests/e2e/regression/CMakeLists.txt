@@ -15,6 +15,7 @@ iree_lit_test_suite(
     lit
   SRCS
     "fill_i64.mlir"
+    "force_single_dispatch.mlir"
     "globals.mlir"
     "libm_linking.mlir"
     "scalar.mlir"
@@ -27,15 +28,29 @@ iree_lit_test_suite(
     iree-run-mlir
   LABELS
     "driver=local-task"
-    "driver=vulkan"
     "hostonly"
+)
+
+iree_check_single_backend_test_suite(
+  NAME
+    check_fp_reassoc_regression_llvm-cpu
+  SRCS
+    "associative_reordering.mlir"
+  TARGET_BACKEND
+    "llvm-cpu"
+  DRIVER
+    "local-task"
+  COMPILER_FLAGS
+    "--iree-llvmcpu-reassociate-fp-reductions=false"
+    "--iree-llvmcpu-target-cpu=generic"
+  INPUT_TYPE
+    "stablehlo"
 )
 
 iree_check_single_backend_test_suite(
   NAME
     check_regression_llvm-cpu
   SRCS
-    "associative_reordering.mlir"
     "dynamic_abs.mlir"
     "dynamic_add.mlir"
     "dynamic_dot.mlir"
@@ -50,6 +65,7 @@ iree_check_single_backend_test_suite(
     "lowering_config.mlir"
     "pack_pad_transpose_1x9_into_2x4x8x4_issue_12546.mlir"
     "reduction_broadcast_elementwise.mlir"
+    "scalar_computation.mlir"
     "softmax.mlir"
     "strided_slice.mlir"
     "transpose.mlir"
@@ -58,7 +74,9 @@ iree_check_single_backend_test_suite(
   DRIVER
     "local-task"
   COMPILER_FLAGS
-    "--iree-input-type=mhlo"
+    "--iree-llvmcpu-target-cpu=generic"
+  INPUT_TYPE
+    "stablehlo"
 )
 
 iree_check_single_backend_test_suite(
@@ -71,7 +89,9 @@ iree_check_single_backend_test_suite(
   DRIVER
     "local-task"
   COMPILER_FLAGS
-    "--iree-input-type=tosa"
+    "--iree-llvmcpu-target-cpu=generic"
+  INPUT_TYPE
+    "tosa"
 )
 
 iree_check_single_backend_test_suite(
@@ -90,6 +110,7 @@ iree_check_single_backend_test_suite(
     "layernorm.mlir"
     "linalg_ops.mlir"
     "reduction_broadcast_elementwise.mlir"
+    "scalar_computation.mlir"
     "softmax.mlir"
     "strided_slice.mlir"
     "transpose.mlir"
@@ -97,8 +118,8 @@ iree_check_single_backend_test_suite(
     "vmvx"
   DRIVER
     "local-task"
-  COMPILER_FLAGS
-    "--iree-input-type=mhlo"
+  INPUT_TYPE
+    "stablehlo"
 )
 
 iree_check_single_backend_test_suite(
@@ -116,6 +137,7 @@ iree_check_single_backend_test_suite(
     "i1_inlined_constant.mlir"
     "linalg_ops.mlir"
     "reduction_broadcast_elementwise.mlir"
+    "scalar_computation.mlir"
     "softmax.mlir"
     "strided_slice.mlir"
     "transpose.mlir"
@@ -123,8 +145,8 @@ iree_check_single_backend_test_suite(
     "vulkan-spirv"
   DRIVER
     "vulkan"
-  COMPILER_FLAGS
-    "--iree-input-type=mhlo"
+  INPUT_TYPE
+    "stablehlo"
 )
 
 iree_check_single_backend_test_suite(
@@ -144,6 +166,7 @@ iree_check_single_backend_test_suite(
     "layernorm.mlir"
     "linalg_ops.mlir"
     "reduction_broadcast_elementwise.mlir"
+    "scalar_computation.mlir"
     "softmax.mlir"
     "strided_slice.mlir"
     "transpose.mlir"
@@ -151,8 +174,8 @@ iree_check_single_backend_test_suite(
     "cuda"
   DRIVER
     "cuda"
-  COMPILER_FLAGS
-    "--iree-input-type=mhlo"
+  INPUT_TYPE
+    "stablehlo"
   LABELS
     "noasan"
     "nomsan"
@@ -172,7 +195,7 @@ iree_check_single_backend_test_suite(
   DRIVER
     "cuda"
   COMPILER_FLAGS
-    "--iree-flow-fuse-multi-use"
+    "--iree-dispatch-creation-fuse-multi-use"
   LABELS
     "noasan"
     "nomsan"
@@ -191,7 +214,8 @@ iree_check_single_backend_test_suite(
   DRIVER
     "local-task"
   COMPILER_FLAGS
-    "-iree-flow-demote-f64-to-f32=false"
+    "--iree-input-demote-f64-to-f32=false"
+    "--iree-llvmcpu-target-cpu=generic"
 )
 
 iree_check_single_backend_test_suite(
@@ -204,7 +228,8 @@ iree_check_single_backend_test_suite(
   DRIVER
     "local-task"
   COMPILER_FLAGS
-    "--iree-flow-fuse-multi-use"
+    "--iree-dispatch-creation-fuse-multi-use"
+    "--iree-llvmcpu-target-cpu=generic"
 )
 
 iree_check_single_backend_test_suite(
@@ -213,12 +238,12 @@ iree_check_single_backend_test_suite(
   SRCS
     "dynamic_matmuls_on_same_accumulator_issue_12060.mlir"
     "dynamic_tosa_clamp.mlir"
-    "dynamic_tosa_quantized_fully_connected_issue_10859.mlir"
   TARGET_BACKEND
     "vmvx"
   COMPILER_FLAGS
-    "--iree-input-type=tosa"
     "--iree-vmvx-enable-microkernels"
+  INPUT_TYPE
+    "tosa"
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

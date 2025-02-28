@@ -14,7 +14,6 @@
 #include "iree/compiler/Dialect/VMVX/IR/VMVXOps.h"
 #include "iree/compiler/Dialect/VMVX/IR/VMVXTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -23,21 +22,21 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Transforms/DialectConversion.h"
 
-namespace mlir {
-namespace iree_compiler {
+namespace mlir::iree_compiler {
+
 namespace {
 
 // Erases an op. This should only be used for ops that are legalized away
 // as part of lowering (i.e. tagging or metadata ops that are unrepresentable
 // in the VM dialect).
 class EraseNonVMOp : public ConversionPattern {
- public:
+public:
   EraseNonVMOp(StringRef rootName, MLIRContext *ctx)
       : ConversionPattern(rootName, 0, ctx) {}
 
-  LogicalResult matchAndRewrite(
-      Operation *op, ArrayRef<Value> operands,
-      ConversionPatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(Operation *op, ArrayRef<Value> operands,
+                  ConversionPatternRewriter &rewriter) const override {
     rewriter.eraseOp(op);
     return success();
   }
@@ -49,16 +48,15 @@ class EraseNonVMOp : public ConversionPattern {
 // it.
 template <typename T>
 class VMVXImportOpConversion : public OpConversionPattern<T> {
- public:
+public:
   VMVXImportOpConversion(MLIRContext *context, SymbolTable &importSymbols,
                          TypeConverter &typeConverter)
-      : OpConversionPattern<T>(context),
-        importSymbols(importSymbols),
+      : OpConversionPattern<T>(context), importSymbols(importSymbols),
         typeConverter(typeConverter) {}
 
-  LogicalResult matchAndRewrite(
-      T op, typename T::Adaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(T op, typename T::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     std::string importFqName = getImportFqName(op);
     auto importOp =
         importSymbols.template lookup<IREE::VM::ImportOp>(importFqName);
@@ -68,16 +66,17 @@ class VMVXImportOpConversion : public OpConversionPattern<T> {
       return failure();
     }
     auto results = emitCall(op, adaptor, importOp, rewriter);
-    if (!results.has_value()) return failure();
+    if (!results.has_value())
+      return failure();
     rewriter.replaceOp(op, results.value());
     return success();
   }
 
- protected:
+protected:
   virtual std::string getImportFqName(T op) const = 0;
-  virtual std::optional<SmallVector<Value>> emitCall(
-      T op, typename T::Adaptor adaptor, IREE::VM::ImportOp importOp,
-      ConversionPatternRewriter &rewriter) const {
+  virtual std::optional<SmallVector<Value>>
+  emitCall(T op, typename T::Adaptor adaptor, IREE::VM::ImportOp importOp,
+           ConversionPatternRewriter &rewriter) const {
     return rewriteToCall(op, adaptor, importOp, typeConverter, rewriter);
   }
 
@@ -92,13 +91,13 @@ class VMVXImportOpConversion : public OpConversionPattern<T> {
 
   std::string getTypedTypeStr(Type type, bool forceUnsigned = false) const {
     Type elementType = type;
-    auto shapedType = type.dyn_cast<ShapedType>();
+    auto shapedType = llvm::dyn_cast<ShapedType>(type);
     if (shapedType) {
       elementType = shapedType.getElementType();
     }
 
     std::string typePrefix = "x";
-    if (elementType.isa<FloatType>()) {
+    if (llvm::isa<FloatType>(elementType)) {
       typePrefix = "f";
     } else if (elementType.isSignlessInteger()) {
       typePrefix = forceUnsigned ? "u" : "i";
@@ -112,13 +111,13 @@ class VMVXImportOpConversion : public OpConversionPattern<T> {
     return typePrefix + std::to_string(bitWidth);
   }
 
- private:
+private:
   SymbolTable &importSymbols;
   TypeConverter &typeConverter;
 };
 
 class BinaryOpConversion : public VMVXImportOpConversion<IREE::VMVX::BinaryOp> {
- public:
+public:
   using VMVXImportOpConversion::VMVXImportOpConversion;
 
   std::string getImportFqName(IREE::VMVX::BinaryOp op) const override {
@@ -135,7 +134,7 @@ class BinaryOpConversion : public VMVXImportOpConversion<IREE::VMVX::BinaryOp> {
 
 // Converts the vmvx.copy op to an appropriate typed import.
 class CopyOpConversion : public VMVXImportOpConversion<IREE::VMVX::CopyOp> {
- public:
+public:
   using VMVXImportOpConversion::VMVXImportOpConversion;
 
   std::string getImportFqName(IREE::VMVX::CopyOp op) const override {
@@ -150,7 +149,7 @@ class CopyOpConversion : public VMVXImportOpConversion<IREE::VMVX::CopyOp> {
 
 // Converts the vmvx.fill2d op to an appropriate typed import.
 class Fill2DOpConversion : public VMVXImportOpConversion<IREE::VMVX::Fill2DOp> {
- public:
+public:
   using VMVXImportOpConversion::VMVXImportOpConversion;
 
   std::string getImportFqName(IREE::VMVX::Fill2DOp op) const override {
@@ -160,19 +159,8 @@ class Fill2DOpConversion : public VMVXImportOpConversion<IREE::VMVX::Fill2DOp> {
   }
 };
 
-// Converts the vmvx.query_tile_sizes op to its import.
-class QueryTileSizesOpConversion
-    : public VMVXImportOpConversion<IREE::VMVX::QueryTileSizesOp> {
- public:
-  using VMVXImportOpConversion::VMVXImportOpConversion;
-
-  std::string getImportFqName(IREE::VMVX::QueryTileSizesOp op) const override {
-    return "vmvx.query_tile_sizes.2d";
-  }
-};
-
 class UnaryOpConversion : public VMVXImportOpConversion<IREE::VMVX::UnaryOp> {
- public:
+public:
   using VMVXImportOpConversion::VMVXImportOpConversion;
 
   std::string getImportFqName(IREE::VMVX::UnaryOp op) const override {
@@ -187,7 +175,7 @@ class UnaryOpConversion : public VMVXImportOpConversion<IREE::VMVX::UnaryOp> {
   }
 };
 
-}  // namespace
+} // namespace
 
 void populateVMVXToVMPatterns(MLIRContext *context,
                               ConversionTarget &conversionTarget,
@@ -195,9 +183,7 @@ void populateVMVXToVMPatterns(MLIRContext *context,
                               SymbolTable &importSymbols,
                               RewritePatternSet &patterns) {
   patterns.insert<BinaryOpConversion, CopyOpConversion, Fill2DOpConversion,
-                  UnaryOpConversion, QueryTileSizesOpConversion>(
-      context, importSymbols, typeConverter);
+                  UnaryOpConversion>(context, importSymbols, typeConverter);
 }
 
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace mlir::iree_compiler

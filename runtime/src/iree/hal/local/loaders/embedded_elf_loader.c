@@ -10,7 +10,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "iree/base/tracing.h"
 #include "iree/hal/api.h"
 #include "iree/hal/local/elf/elf_module.h"
 #include "iree/hal/local/executable_library.h"
@@ -36,8 +35,6 @@ typedef struct iree_hal_elf_executable_t {
     const iree_hal_executable_library_header_t** header;
     const iree_hal_executable_library_v0_t* v0;
   } library;
-
-  iree_hal_pipeline_layout_t* layouts[];
 } iree_hal_elf_executable_t;
 
 static const iree_hal_local_executable_vtable_t iree_hal_elf_executable_vtable;
@@ -92,8 +89,6 @@ static iree_status_t iree_hal_elf_executable_create(
   IREE_ASSERT_ARGUMENT(executable_params);
   IREE_ASSERT_ARGUMENT(executable_params->executable_data.data &&
                        executable_params->executable_data.data_length);
-  IREE_ASSERT_ARGUMENT(!executable_params->pipeline_layout_count ||
-                       executable_params->pipeline_layouts);
   IREE_ASSERT_ARGUMENT(!executable_params->constant_count ||
                        executable_params->constants);
   IREE_ASSERT_ARGUMENT(out_executable);
@@ -106,24 +101,18 @@ static iree_status_t iree_hal_elf_executable_create(
   iree_hal_elf_executable_t* executable = NULL;
   iree_host_size_t total_size =
       sizeof(*executable) +
-      executable_params->pipeline_layout_count * sizeof(*executable->layouts) +
       executable_params->constant_count * sizeof(*executable_params->constants);
   iree_status_t status =
       iree_allocator_malloc(host_allocator, total_size, (void**)&executable);
   if (iree_status_is_ok(status)) {
-    iree_hal_local_executable_initialize(
-        &iree_hal_elf_executable_vtable,
-        executable_params->pipeline_layout_count,
-        executable_params->pipeline_layouts, &executable->layouts[0],
-        host_allocator, &executable->base);
+    iree_hal_local_executable_initialize(&iree_hal_elf_executable_vtable,
+                                         host_allocator, &executable->base);
   }
 
   // Copy executable constants so we own them.
   if (iree_status_is_ok(status) && executable_params->constant_count > 0) {
     uint32_t* target_constants =
-        (uint32_t*)((uint8_t*)executable + sizeof(*executable) +
-                    executable_params->pipeline_layout_count *
-                        sizeof(*executable->layouts));
+        (uint32_t*)((uint8_t*)executable + sizeof(*executable));
     memcpy(target_constants, executable_params->constants,
            executable_params->constant_count *
                sizeof(*executable_params->constants));
@@ -155,6 +144,11 @@ static iree_status_t iree_hal_elf_executable_create(
   if (iree_status_is_ok(status)) {
     status = iree_hal_executable_library_verify(executable_params,
                                                 executable->library.v0);
+  }
+
+  // Publish the executable sources with the tracing infrastructure.
+  if (iree_status_is_ok(status)) {
+    iree_hal_executable_library_publish_source_files(executable->library.v0);
   }
 
   if (iree_status_is_ok(status)) {
@@ -201,9 +195,13 @@ static iree_status_t iree_hal_elf_executable_issue_call(
 
   IREE_HAL_EXECUTABLE_LIBRARY_CALL_TRACE_ZONE_BEGIN(z0, executable->identifier,
                                                     library, ordinal);
+  IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK_BEGIN(executable->identifier, library,
+                                              ordinal);
   int ret = iree_elf_call_i_ppp(library->exports.ptrs[ordinal],
                                 (void*)&base_executable->environment,
                                 (void*)dispatch_state, (void*)workgroup_state);
+  IREE_HAL_EXECUTABLE_LIBRARY_CALL_HOOK_END(executable->identifier, library,
+                                            ordinal);
   IREE_TRACE_ZONE_END(z0);
 
   return ret == 0 ? iree_ok_status()

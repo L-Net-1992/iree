@@ -41,6 +41,7 @@ iree_compiler_cc_library(
         "//compiler/src/iree/compiler/Dialect/HAL/IR",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -57,11 +58,13 @@ iree_compiler_cc_library(
         ":IR",
         ":check_ops_gen",
         "//compiler/src/iree/compiler/Dialect/HAL/Conversion",
+        "//compiler/src/iree/compiler/Dialect/HAL/IR:HALDialect",
         "//compiler/src/iree/compiler/Dialect/VM/Conversion",
         "//compiler/src/iree/compiler/Modules/Check:check_imports",
         "//compiler/src/iree/compiler/Modules/Check/Conversion",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
     ],
 )

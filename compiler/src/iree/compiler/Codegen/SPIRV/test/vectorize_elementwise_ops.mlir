@@ -1,4 +1,6 @@
-// RUN: iree-opt --split-input-file --iree-spirv-vectorize %s | FileCheck %s
+// RUN: iree-opt --split-input-file \
+// RUN:   --pass-pipeline='builtin.module(func.func(iree-codegen-generic-vectorization,iree-spirv-initial-vector-lowering,iree-codegen-optimize-tensor-insert-extract-slices,iree-spirv-final-vector-lowering,canonicalize,cse))' \
+// RUN:   %s | FileCheck %s
 
 func.func @add(%lhs: tensor<2x8xf32>, %rhs: tensor<2x8xf32>) -> tensor<2x8xf32> {
   %init = tensor.empty() : tensor<2x8xf32>
@@ -46,20 +48,20 @@ func.func @transpose_leading_one_dim(%input: tensor<4x1x1xf32>) -> tensor<1x1x4x
 //   CHECK-DAG:   %[[C1:.+]] = arith.constant 1 : index
 //   CHECK-DAG:   %[[C2:.+]] = arith.constant 2 : index
 //   CHECK-DAG:   %[[C3:.+]] = arith.constant 3 : index
-//   CHECK-DAG:   %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : vector<4xf32>
+//   CHECK-DAG:   %[[ZERO:.+]] = ub.poison : vector<4xf32>
 
 //       CHECK:   %[[R0:.+]] = vector.transfer_read %[[INPUT]][%[[C0]], %[[C0]], %[[C0]]]{{.+}} : tensor<4x1x1xf32>, vector<1xf32>
 //       CHECK:   %[[R1:.+]] = vector.transfer_read %[[INPUT]][%[[C1]], %[[C0]], %[[C0]]]{{.+}} : tensor<4x1x1xf32>, vector<1xf32>
 //       CHECK:   %[[R2:.+]] = vector.transfer_read %[[INPUT]][%[[C2]], %[[C0]], %[[C0]]]{{.+}} : tensor<4x1x1xf32>, vector<1xf32>
 //       CHECK:   %[[R3:.+]] = vector.transfer_read %[[INPUT]][%[[C3]], %[[C0]], %[[C0]]]{{.+}} : tensor<4x1x1xf32>, vector<1xf32>
 
-//       CHECK:   %[[E0:.+]] = vector.extract %[[R0]][0] : vector<1xf32>
+//       CHECK:   %[[E0:.+]] = vector.extract %[[R0]][0] : f32 from vector<1xf32>
 //       CHECK:   %[[I0:.+]] = vector.insert %[[E0]], %[[ZERO]] [0] : f32 into vector<4xf32>
-//       CHECK:   %[[E1:.+]] = vector.extract %[[R1]][0] : vector<1xf32>
+//       CHECK:   %[[E1:.+]] = vector.extract %[[R1]][0] : f32 from vector<1xf32>
 //       CHECK:   %[[I1:.+]] = vector.insert %[[E1]], %[[I0]] [1] : f32 into vector<4xf32>
-//       CHECK:   %[[E2:.+]] = vector.extract %[[R2]][0] : vector<1xf32>
+//       CHECK:   %[[E2:.+]] = vector.extract %[[R2]][0] : f32 from vector<1xf32>
 //       CHECK:   %[[I2:.+]] = vector.insert %[[E2]], %[[I1]] [2] : f32 into vector<4xf32>
-//       CHECK:   %[[E3:.+]] = vector.extract %[[R3]][0] : vector<1xf32>
+//       CHECK:   %[[E3:.+]] = vector.extract %[[R3]][0] : f32 from vector<1xf32>
 //       CHECK:   %[[I3:.+]] = vector.insert %[[E3]], %[[I2]] [3] : f32 into vector<4xf32>
 
 //       CHECK:   %[[W:.+]] = vector.transfer_write %[[I3]], %{{.+}}
@@ -91,7 +93,7 @@ func.func @transpose_add(%lhs: tensor<4x2xf32>, %rhs: tensor<2xf32>) -> tensor<2
 //   CHECK-DAG:   %[[C2:.+]] = arith.constant 2 : index
 //   CHECK-DAG:   %[[C3:.+]] = arith.constant 3 : index
 
-//   CHECK-DAG:   %[[OINIT:.+]] = arith.constant dense<0.000000e+00> : vector<4xf32>
+//   CHECK-DAG:   %[[OINIT:.+]] = ub.poison : vector<4xf32>
 
 //       CHECK:   %[[LHS0:.+]] = vector.transfer_read %[[LHS]][%[[C0]], %[[C0]]]{{.+}} : tensor<4x2xf32>, vector<2xf32>
 //       CHECK:   %[[LHS1:.+]] = vector.transfer_read %[[LHS]][%[[C1]], %[[C0]]]{{.+}} : tensor<4x2xf32>, vector<2xf32>

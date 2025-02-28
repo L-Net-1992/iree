@@ -33,7 +33,6 @@ iree_cc_library(
     ::task
     iree::base
     iree::base::internal::flags
-    iree::base::tracing
   PUBLIC
 )
 
@@ -67,12 +66,14 @@ iree_cc_library(
     "task_impl.h"
     "topology.c"
     "topology_cpuinfo.c"
+    "topology_darwin.c"
+    "topology_emscripten.c"
+    "topology_win32.c"
     "worker.c"
     "worker.h"
   DEPS
     ${IREE_CPUINFO_TARGET}
     iree::base
-    iree::base::core_headers
     iree::base::internal
     iree::base::internal::atomic_slist
     iree::base::internal::cpu
@@ -82,7 +83,6 @@ iree_cc_library(
     iree::base::internal::synchronization
     iree::base::internal::threading
     iree::base::internal::wait_handle
-    iree::base::tracing
   PUBLIC
 )
 
@@ -95,7 +95,6 @@ iree_cc_test(
     ::task
     iree::base
     iree::base::internal::prng
-    iree::base::tracing
     iree::task::testing::test_util
 )
 
@@ -146,6 +145,7 @@ iree_cc_test(
   DEPS
     ::task
     iree::base
+    iree::base::internal::threading
     iree::task::testing::test_util
     iree::testing::gtest
     iree::testing::gtest_main

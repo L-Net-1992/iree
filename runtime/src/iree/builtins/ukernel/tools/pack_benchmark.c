@@ -21,6 +21,8 @@ IREE_FLAG(
 IREE_FLAG(
     int32_t, padding_size, 0,
     "Padding size (same value used for both dimensions, 0 means no padding)");
+IREE_FLAG(int32_t, inner_stride, 1,
+          "Inner stride of the pack input buffers. Default 1 means unstrided.");
 
 static iree_status_t iree_uk_benchmark_pack(
     const iree_benchmark_def_t* benchmark_def,
@@ -33,15 +35,15 @@ static iree_status_t iree_uk_benchmark_pack(
   iree_uk_pack_type_t pack_type = iree_uk_pack_type(params.flags);
   iree_uk_type_t in_type = iree_uk_pack_in_type(pack_type);
   iree_uk_type_t out_type = iree_uk_pack_out_type(pack_type);
-  iree_uk_ssize_t in_type_size = iree_uk_type_size(in_type);
-  iree_uk_ssize_t out_type_size = iree_uk_type_size(out_type);
+  iree_uk_index_t in_type_size = iree_uk_type_size(in_type);
+  iree_uk_index_t out_type_size = iree_uk_type_size(out_type);
 
   // The inner dims 2, 3 are given to us as part of the benchmark user_data.
   // The outer dims 0, 1 are to be determined based on FLAG_working_set_size.
-  iree_uk_ssize_t out_size0 = 1;
-  iree_uk_ssize_t out_size1 = 1;
-  iree_uk_ssize_t out_size2 = params.out_size2;
-  iree_uk_ssize_t out_size3 = params.out_size3;
+  iree_uk_index_t out_size0 = 1;
+  iree_uk_index_t out_size1 = 1;
+  iree_uk_index_t out_size2 = params.out_size2;
+  iree_uk_index_t out_size3 = params.out_size3;
   int target_matrix_size_in_elems =
       FLAG_working_set_size / (in_type_size + out_type_size);
   int target_product_of_outer_sizes_0_1 =
@@ -55,18 +57,20 @@ static iree_status_t iree_uk_benchmark_pack(
   params.out_size0 = out_size0;
   params.out_size1 = out_size1;
   if (params.flags & IREE_UK_FLAG_PACK_TRANSPOSE_OUTER) {
-    iree_uk_ssize_swap(&out_size0, &out_size1);
+    iree_uk_index_swap(&out_size0, &out_size1);
   }
   if (params.flags & IREE_UK_FLAG_PACK_TRANSPOSE_INNER) {
-    iree_uk_ssize_swap(&out_size2, &out_size3);
+    iree_uk_index_swap(&out_size2, &out_size3);
   }
   params.in_size0 = iree_max(0, out_size0 * out_size2 - FLAG_padding_size);
   params.in_size1 = iree_max(0, out_size1 * out_size3 - FLAG_padding_size);
-  params.in_stride0 = params.in_size1;
-  params.out_stride0 = params.out_size1 * params.out_size2 * params.out_size3;
-  iree_uk_ssize_t in_buffer_size =
+  params.in_stride1 = FLAG_inner_stride;
+  params.in_stride0 = params.in_size1 * params.in_stride1;
+  params.out_stride1 = params.out_size2 * params.out_size3;
+  params.out_stride0 = params.out_size1 * params.out_stride1;
+  iree_uk_index_t in_buffer_size =
       iree_uk_2d_buffer_length(in_type, params.in_size0, params.in_stride0);
-  iree_uk_ssize_t out_buffer_size =
+  iree_uk_index_t out_buffer_size =
       iree_uk_2d_buffer_length(out_type, params.out_size0, params.out_stride0);
   void* in_buffer = malloc(in_buffer_size);
   void* out_buffer = malloc(out_buffer_size);
@@ -85,7 +89,7 @@ static iree_status_t iree_uk_benchmark_pack(
   int64_t batch_count = 1;
   while (iree_benchmark_keep_running(benchmark_state, batch_count)) {
     for (int i = 0; i < batch_count; ++i) {
-      iree_uk_pack(&params);
+      iree_uk_pack_p(&params);
     }
     total_iterations += batch_count;
     batch_count *= 2;
@@ -140,17 +144,19 @@ int main(int argc, char** argv) {
   // close to memory-bound.
   iree_uk_benchmark_register_memcpy(FLAG_working_set_size);
 
-#if defined(IREE_UK_ARCH_ARM_64)
+#if defined(IREE_ARCH_ARM_64)
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_F32F32, 8, 1, "");
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_I8I8, 8, 1, "");
   // Tile size selected with cpu feature "dotprod".
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_I8I8, 8, 4, "");
   // Tile size selected with cpu feature "i8mm".
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_I8I8, 8, 8, "");
-#elif defined(IREE_UK_ARCH_X86_64)
+#elif defined(IREE_ARCH_X86_64)
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_F32F32, 8, 1,
                                   "avx2_fma");
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_F32F32, 16, 1,
+                                  "avx512_base");
+  iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_BF16BF16, 16, 2,
                                   "avx512_base");
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_F32F32, 8, 8,
                                   "avx2_fma");
@@ -164,12 +170,12 @@ int main(int argc, char** argv) {
                                   "avx2_fma");
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_I32I32, 16, 16,
                                   "avx512_base");
-#else   // defined(IREE_UK_ARCH_ARM_64)
+#else   // defined(IREE_ARCH_ARM_64)
   // Architectures on which we do not have any optimized ukernel code.
   // Benchmark some arbitrary tile shape.
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_F32F32, 8, 1, "");
   iree_uk_benchmark_register_pack(IREE_UK_FLAG_PACK_TYPE_I8I8, 8, 1, "");
-#endif  // defined(IREE_UK_ARCH_ARM_64)
+#endif  // defined(IREE_ARCH_ARM_64)
 
   iree_uk_benchmark_run_and_cleanup();
 }

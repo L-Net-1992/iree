@@ -4,8 +4,8 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
+load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 
 package(
     features = ["layering_check"],
@@ -14,9 +14,14 @@ package(
 
 iree_lit_test_suite(
     name = "lit",
+    timeout = "moderate",
     srcs = enforce_glob(
         [
+            "compile_regressions.mlir",
+            "failing.mlir",
             "jit_globals.mlir",
+            "jit_globals_vmvx_errors.mlir",
+            "scalar_values.mlir",
         ],
         include = ["*.mlir"],
     ),

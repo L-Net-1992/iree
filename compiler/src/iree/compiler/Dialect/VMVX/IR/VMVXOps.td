@@ -7,6 +7,7 @@
 #ifndef IREE_DIALECT_MODULES_VMVX_OPS
 #define IREE_DIALECT_MODULES_VMVX_OPS
 
+include "iree/compiler/Dialect/HAL/IR/HALAttrs.td"
 include "iree/compiler/Dialect/VMVX/IR/VMVXBase.td"
 include "iree/compiler/Dialect/VMVX/IR/VMVXInterfaces.td"
 include "mlir/IR/OpAsmInterface.td"
@@ -19,6 +20,13 @@ class VMVX_PureOp<string mnemonic, list<Trait> traits = []> :
 //===----------------------------------------------------------------------===//
 // Utility ops
 //===----------------------------------------------------------------------===//
+
+def OpGroupUtilityOps : OpDocGroup {
+  let summary = "Utility ops";
+  let description = "";
+}
+
+let opDocGroup = OpGroupUtilityOps in {
 
 def VMVX_GetBufferDescriptorOp : VMVX_PureOp<"get_buffer_descriptor", [
     SameVariadicResultSize
@@ -64,41 +72,31 @@ def VMVX_GetRawInterfaceBindingBufferOp : VMVX_PureOp<
     buffer as passed to the interface.
   }];
   let arguments = (ins
-    IndexAttr:$set,
+    HAL_PipelineLayoutAttr:$layout,
     IndexAttr:$binding
   );
   let results = (outs
     Util_BufferType:$buffer
   );
   let assemblyFormat = [{
-    `set` `(` $set `)` `binding` `(` $binding `)` attr-dict
+    `layout` `(` $layout `)`
+    `binding` `(` $binding `)`
+    attr-dict
   }];
 }
 
-def VMVX_QueryTileSizesOp : VMVX_PureOp<"query_tile_sizes", [Pure]> {
-  let summary = "Returns tile sizes to use to materialize the given encoding, based on runtime CPU capabilities.";
-  let description = [{
-    TODO write me
-  }];
-
-  let arguments = (ins
-    Variadic<VMVX_Index>:$sizes,
-    I32Attr:$flags
-  );
-  let results = (outs
-    Variadic<VMVX_Index>:$tileSizes
-  );
-
-  let assemblyFormat = [{
-    `sizes` `` `(` $sizes `)`
-    `flags` `` `(` $flags `)`
-    `->` type(results) attr-dict
-  }];
-}
+} // OpGroupUtilityOps
 
 //===----------------------------------------------------------------------===//
 // VMVX Ops: ABI
 //===----------------------------------------------------------------------===//
+
+def OpGroupABIOps : OpDocGroup {
+  let summary = "ABI ops";
+  let description = "";
+}
+
+let opDocGroup = OpGroupABIOps in {
 
 def VMVX_BinaryOp : VMVX_Op<"binary", [SameVariadicOperandSize]> {
   let summary = "Performs a strided elementwise operation on two same-rank buffers";
@@ -231,5 +229,7 @@ def VMVX_UnaryOp : VMVX_Op<"unary", [SameVariadicOperandSize]> {
     attr-dict
   }];
 }
+
+} // OpGroupABIOps
 
 #endif  // IREE_DIALECT_MODULES_VMVX_OPS

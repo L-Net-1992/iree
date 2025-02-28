@@ -4,12 +4,44 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-load("//build_tools/bazel:build_defs.oss.bzl", "iree_compiler_cc_library")
+load("//build_tools/bazel:build_defs.oss.bzl", "iree_compiler_cc_library", "iree_gentbl_cc_library")
 
 package(
     default_visibility = ["//visibility:public"],
     features = ["layering_check"],
     licenses = ["notice"],  # Apache 2.0
+)
+
+iree_gentbl_cc_library(
+    name = "PassesIncGen",
+    tbl_outs = [
+        (
+            ["--gen-pass-decls"],
+            "Passes.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Passes.td",
+    deps = ["@llvm-project//mlir:PassBaseTdFiles"],
+)
+
+iree_compiler_cc_library(
+    name = "PassHeaders",
+    hdrs = [
+        "Passes.h",
+        "Passes.h.inc",
+    ],
+    deps = [
+        ":PassesIncGen",
+        "//compiler/src/iree/compiler/Codegen/Dialect/Codegen/IR:IREECodegenDialect",
+        "//compiler/src/iree/compiler/Dialect/HAL/IR",
+        "//compiler/src/iree/compiler/Utils",
+        "@llvm-project//mlir:LinalgTransforms",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:TransformUtils",
+        "@llvm-project//mlir:Transforms",
+    ],
 )
 
 iree_compiler_cc_library(
@@ -25,41 +57,51 @@ iree_compiler_cc_library(
         "Passes.cpp",
         "SPIRVAnnotateWinogradLoops.cpp",
         "SPIRVBreakDownLargeVector.cpp",
-        "SPIRVCreateFastSlowPath.cpp",
-        "SPIRVDistribute.cpp",
-        "SPIRVEmulateBf16.cpp",
+        "SPIRVConvertGPUTarget.cpp",
         "SPIRVEmulateI64.cpp",
         "SPIRVEraseStorageBufferStaticShape.cpp",
+        "SPIRVFinalVectorLowering.cpp",
+        "SPIRVInitialVectorLowering.cpp",
+        "SPIRVLinkExecutables.cpp",
         "SPIRVLowerExecutableTargetPass.cpp",
+        "SPIRVLowerExecutableUsingTransformDialect.cpp",
         "SPIRVMapMemRefStorageClass.cpp",
-        "SPIRVTile.cpp",
+        "SPIRVMaterializeExecutableConditions.cpp",
+        "SPIRVSelectLoweringStrategy.cpp",
         "SPIRVTileAndDistribute.cpp",
         "SPIRVTileAndPromote.cpp",
         "SPIRVTileAndVectorizeToCooperativeOps.cpp",
+        "SPIRVTrimExecutableTargetEnv.cpp",
         "SPIRVVectorToGPUSubgroupMMAOps.cpp",
-        "SPIRVVectorize.cpp",
         "SPIRVVectorizeLoadStore.cpp",
         "Utils.cpp",
         "Verifiers.cpp",
     ],
     hdrs = [
         "KernelConfig.h",
+        "Passes.h",
         "Utils.h",
     ],
     deps = [
-        "//compiler/src/iree/compiler/Codegen:PassHeaders",
+        ":PassHeaders",
+        ":PassesIncGen",
         "//compiler/src/iree/compiler/Codegen/Common",
-        "//compiler/src/iree/compiler/Codegen/Dialect:IREECodegenDialect",
+        "//compiler/src/iree/compiler/Codegen/Common:TransformDialectInterpreterPass",
+        "//compiler/src/iree/compiler/Codegen/Common/GPU:CommonGPUPasses",
+        "//compiler/src/iree/compiler/Codegen/Common/GPU:GPUHeuristics",
+        "//compiler/src/iree/compiler/Codegen/Dialect/Codegen/IR:IREECodegenDialect",
+        "//compiler/src/iree/compiler/Codegen/Dialect/GPU/IR:IREEGPUDialect",
+        "//compiler/src/iree/compiler/Codegen/Interfaces:PartitionableLoopsInterface",
         "//compiler/src/iree/compiler/Codegen/Transforms",
         "//compiler/src/iree/compiler/Codegen/Utils",
         "//compiler/src/iree/compiler/Dialect/Flow/IR",
         "//compiler/src/iree/compiler/Dialect/HAL/IR",
         "//compiler/src/iree/compiler/Dialect/HAL/IR:HALDialect",
+        "//compiler/src/iree/compiler/Dialect/LinalgExt/IR",
+        "//compiler/src/iree/compiler/Dialect/LinalgExt/Transforms",
         "//compiler/src/iree/compiler/Dialect/Util/IR",
         "//compiler/src/iree/compiler/Dialect/Util/Transforms",
-        "//llvm-external-projects/iree-dialects:IREELinalgExtDialect",
-        "//llvm-external-projects/iree-dialects:IREELinalgExtPasses",
-        "//llvm-external-projects/iree-dialects:IREELinalgExtTransforms",
+        "//compiler/src/iree/compiler/Utils",
         "//llvm-external-projects/iree-dialects:IREELinalgTransformDialect",
         "//llvm-external-projects/iree-dialects:IREELinalgTransformDialectPasses",
         "@llvm-project//llvm:Support",
@@ -80,6 +122,7 @@ iree_compiler_cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncToSPIRV",
         "@llvm-project//mlir:FuncTransforms",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:GPUToSPIRV",
         "@llvm-project//mlir:GPUTransforms",
@@ -109,7 +152,10 @@ iree_compiler_cc_library(
         "@llvm-project//mlir:TosaDialect",
         "@llvm-project//mlir:TosaToArith",
         "@llvm-project//mlir:TransformDialect",
+        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:UBDialect",
+        "@llvm-project//mlir:UBToSPIRV",
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorInterfaces",
         "@llvm-project//mlir:VectorToGPU",

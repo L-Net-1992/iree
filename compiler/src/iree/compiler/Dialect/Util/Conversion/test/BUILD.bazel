@@ -4,8 +4,8 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 load("//build_tools/bazel:enforce_glob.bzl", "enforce_glob")
+load("//build_tools/bazel:iree_lit_test.bzl", "iree_lit_test_suite")
 
 package(
     features = ["layering_check"],
@@ -15,7 +15,10 @@ package(
 iree_lit_test_suite(
     name = "lit",
     srcs = enforce_glob(
-        ["structural_ops.mlir"],
+        [
+            "compiler_hints.mlir",
+            "structural_ops.mlir",
+        ],
         include = ["*.mlir"],
     ),
     cfg = "//compiler:lit.cfg.py",

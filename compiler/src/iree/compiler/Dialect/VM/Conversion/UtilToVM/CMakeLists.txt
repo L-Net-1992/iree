@@ -14,17 +14,20 @@ iree_cc_library(
   NAME
     UtilToVM
   HDRS
-    "ConvertUtilToVM.h"
+    "Patterns.h"
   SRCS
     "ConvertAlignmentOps.cpp"
+    "ConvertAssignmentOps.cpp"
     "ConvertBufferOps.cpp"
     "ConvertGlobalOps.cpp"
     "ConvertListOps.cpp"
     "ConvertStatusOps.cpp"
-    "ConvertUtilToVM.cpp"
+    "ConvertStructuralOps.cpp"
+    "Patterns.cpp"
   DEPS
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRPass
     MLIRTransformUtils

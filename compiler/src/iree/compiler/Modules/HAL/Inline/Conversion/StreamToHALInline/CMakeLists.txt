@@ -21,14 +21,15 @@ iree_cc_library(
     LLVMSupport
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
     MLIRPass
+    MLIRTransformUtils
     MLIRTransforms
     iree::compiler::Dialect::HAL::Conversion
     iree::compiler::Dialect::HAL::IR
     iree::compiler::Dialect::HAL::IR::HALDialect
     iree::compiler::Dialect::HAL::Target
-    iree::compiler::Dialect::HAL::Utils
     iree::compiler::Dialect::Stream::IR
     iree::compiler::Dialect::Util::IR
     iree::compiler::Modules::HAL::Inline::IR

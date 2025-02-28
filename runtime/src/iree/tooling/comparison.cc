@@ -11,11 +11,9 @@
 
 #include "iree/base/api.h"
 #include "iree/base/internal/flags.h"
-#include "iree/base/tracing.h"
 #include "iree/hal/api.h"
 #include "iree/modules/hal/module.h"
 #include "iree/tooling/buffer_view_matchers.h"
-#include "iree/tooling/vm_util.h"
 #include "iree/vm/api.h"
 
 using namespace iree;
@@ -235,7 +233,9 @@ bool iree_tooling_compare_variant_lists_and_append(
 
   if (iree_vm_list_size(expected_list) != iree_vm_list_size(actual_list)) {
     IREE_CHECK_OK(iree_string_builder_append_format(
-        builder, "[FAILED] expected %zu list elements but %zu provided\n",
+        builder,
+        "[FAILED] expected %" PRIhsz " list elements but %" PRIhsz
+        " provided\n",
         iree_vm_list_size(expected_list), iree_vm_list_size(actual_list)));
     return false;
   }

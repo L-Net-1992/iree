@@ -12,22 +12,31 @@ iree_add_all_subdirs()
 
 iree_cc_library(
   NAME
-    static_assert
+    exported_bits
   HDRS
-    "static_assert.h"
+    "exported_bits.h"
   DEPS
 
   PUBLIC
 )
 
-iree_cc_library(
-  NAME
-    exported_bits
-  HDRS
+add_custom_command(OUTPUT internal_headers_filegroup.stamp
+    COMMAND ${CMAKE_COMMAND} -E touch internal_headers_filegroup.stamp
+  DEPENDS
+    "common.h"
     "exported_bits.h"
-  DEPS
-    ::static_assert
-  PUBLIC
+    "mmt4d.h"
+    "mmt4d_internal.h"
+    "pack.h"
+    "pack_internal.h"
+    "query_tile_sizes.h"
+    "query_tile_sizes_internal.h"
+    "unpack.h"
+    "unpack_internal.h"
+)
+
+add_custom_target(internal_headers_filegroup
+    DEPENDS internal_headers_filegroup.stamp
 )
 
 iree_cc_library(
@@ -35,7 +44,7 @@ iree_cc_library(
     internal_headers
   HDRS
     "common.h"
-    "elementwise.h"
+    "exported_bits.h"
     "mmt4d.h"
     "mmt4d_internal.h"
     "pack.h"
@@ -45,10 +54,28 @@ iree_cc_library(
     "unpack.h"
     "unpack_internal.h"
   DEPS
-    ::exported_bits
-    ::static_assert
     iree::base::core_headers
-    iree::builtins::ukernel::arch::config
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    fallback
+  HDRS
+    "common.h"
+    "exported_bits.h"
+    "mmt4d.h"
+    "mmt4d_internal.h"
+    "pack.h"
+    "pack_internal.h"
+    "query_tile_sizes.h"
+    "query_tile_sizes_internal.h"
+    "unpack.h"
+    "unpack_internal.h"
+  SRCS
+    "fallback.c"
+  DEPS
+
   PUBLIC
 )
 
@@ -59,12 +86,11 @@ iree_cc_library(
     "api.h"
   SRCS
     "common.h"
-    "elementwise.c"
-    "elementwise.h"
+    "exported_bits.h"
     "mmt4d.c"
     "mmt4d.h"
     "mmt4d_internal.h"
-    "mmt4d_tile.c"
+    "mmt4d_tile_generic.c"
     "pack.c"
     "pack.h"
     "pack_internal.h"
@@ -78,11 +104,164 @@ iree_cc_library(
     "unpack_tile.c"
   DEPS
     ::exported_bits
-    ::static_assert
     iree::base::core_headers
-    iree::builtins::ukernel::arch::config
     iree::builtins::ukernel::arch::ukernel_arch
   PUBLIC
 )
+
+if(IREE_BUILD_COMPILER AND IREE_TARGET_BACKEND_LLVM_CPU)
+
+iree_bitcode_library(
+  NAME
+    ukernel_bitcode_generic_x86_64
+  ARCH
+    x86_64
+  INTERNAL_HDRS
+    "${PROJECT_BINARY_DIR}/runtime/src/iree/schemas/cpu_data_headers_filegroup.stamp"
+    "internal_headers_filegroup.stamp"
+  SRCS
+    "mmt4d.c"
+    "mmt4d_tile_generic.c"
+    "pack.c"
+    "pack_tile.c"
+    "unpack.c"
+    "unpack_tile.c"
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_bitcode_generic_arm_64
+  ARCH
+    arm_64
+  INTERNAL_HDRS
+    "${PROJECT_BINARY_DIR}/runtime/src/iree/schemas/cpu_data_headers_filegroup.stamp"
+    "internal_headers_filegroup.stamp"
+  SRCS
+    "mmt4d.c"
+    "mmt4d_tile_generic.c"
+    "pack.c"
+    "pack_tile.c"
+    "unpack.c"
+    "unpack_tile.c"
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_bitcode_generic_arm_32
+  ARCH
+    arm_32
+  INTERNAL_HDRS
+    "${PROJECT_BINARY_DIR}/runtime/src/iree/schemas/cpu_data_headers_filegroup.stamp"
+    "internal_headers_filegroup.stamp"
+  SRCS
+    "fallback.c"
+    "mmt4d.c"
+    "mmt4d_tile_generic.c"
+    "pack.c"
+    "pack_tile.c"
+    "unpack.c"
+    "unpack_tile.c"
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_bitcode_generic_riscv_64
+  ARCH
+    riscv_64
+  INTERNAL_HDRS
+    "${PROJECT_BINARY_DIR}/runtime/src/iree/schemas/cpu_data_headers_filegroup.stamp"
+    "internal_headers_filegroup.stamp"
+  SRCS
+    "fallback.c"
+    "mmt4d.c"
+    "mmt4d_tile_generic.c"
+    "pack.c"
+    "pack_tile.c"
+    "unpack.c"
+    "unpack_tile.c"
+)
+
+iree_bitcode_library(
+  NAME
+    ukernel_bitcode_generic_riscv_32
+  ARCH
+    riscv_32
+  INTERNAL_HDRS
+    "${PROJECT_BINARY_DIR}/runtime/src/iree/schemas/cpu_data_headers_filegroup.stamp"
+    "internal_headers_filegroup.stamp"
+  SRCS
+    "fallback.c"
+    "mmt4d.c"
+    "mmt4d_tile_generic.c"
+    "pack.c"
+    "pack_tile.c"
+    "unpack.c"
+    "unpack_tile.c"
+)
+
+iree_link_bitcode(
+  NAME
+    ukernel_bitcode_x86_64
+  SRCS
+    "arch/x86_64/ukernel_bitcode_arch_x86_64.bc"
+    "ukernel_bitcode_generic_x86_64.bc"
+
+)
+
+iree_link_bitcode(
+  NAME
+    ukernel_bitcode_arm_64
+  SRCS
+    "arch/arm_64/ukernel_bitcode_arch_arm_64.bc"
+    "ukernel_bitcode_generic_arm_64.bc"
+
+)
+
+iree_link_bitcode(
+  NAME
+    ukernel_bitcode_arm_32
+  SRCS
+    "ukernel_bitcode_generic_arm_32.bc"
+
+)
+
+iree_link_bitcode(
+  NAME
+    ukernel_bitcode_riscv_64
+  SRCS
+    "ukernel_bitcode_generic_riscv_64.bc"
+
+)
+
+iree_link_bitcode(
+  NAME
+    ukernel_bitcode_riscv_32
+  SRCS
+    "ukernel_bitcode_generic_riscv_32.bc"
+
+)
+
+iree_c_embed_data(
+  NAME
+    embed_ukernel_bitcode
+  SRCS
+    "ukernel_bitcode_arm_32.bc"
+    "ukernel_bitcode_arm_64.bc"
+    "ukernel_bitcode_riscv_32.bc"
+    "ukernel_bitcode_riscv_64.bc"
+    "ukernel_bitcode_x86_64.bc"
+  DEPS
+
+  C_FILE_OUTPUT
+    "ukernel_bitcode.c"
+  H_FILE_OUTPUT
+    "ukernel_bitcode.h"
+  IDENTIFIER
+    "iree_ukernel_bitcode"
+  FLATTEN
+  PUBLIC
+)
+
+endif()  # IREE_BUILD_COMPILER AND IREE_TARGET_BACKEND_LLVM_CPU
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

@@ -12,6 +12,21 @@ iree_add_all_subdirs()
 
 flatbuffer_c_library(
   NAME
+    amdgpu_executable_def_c_fbs
+  SRCS
+    "amdgpu_executable_def.fbs"
+  FLATCC_ARGS
+    "--reader"
+    "--builder"
+    "--verifier"
+    "--json"
+  INCLUDES
+    "executable_debug_info.fbs"
+  PUBLIC
+)
+
+flatbuffer_c_library(
+  NAME
     bytecode_module_def_c_fbs
   SRCS
     "bytecode_module_def.fbs"
@@ -33,19 +48,36 @@ flatbuffer_c_library(
     "--builder"
     "--verifier"
     "--json"
+  INCLUDES
+    "executable_debug_info.fbs"
   PUBLIC
 )
 
 flatbuffer_c_library(
   NAME
-    rocm_executable_def_c_fbs
+    executable_debug_info_c_fbs
   SRCS
-    "rocm_executable_def.fbs"
+    "executable_debug_info.fbs"
   FLATCC_ARGS
     "--reader"
     "--builder"
     "--verifier"
     "--json"
+  PUBLIC
+)
+
+flatbuffer_c_library(
+  NAME
+    hip_executable_def_c_fbs
+  SRCS
+    "hip_executable_def.fbs"
+  FLATCC_ARGS
+    "--reader"
+    "--builder"
+    "--verifier"
+    "--json"
+  INCLUDES
+    "executable_debug_info.fbs"
   PUBLIC
 )
 
@@ -59,33 +91,50 @@ flatbuffer_c_library(
     "--builder"
     "--verifier"
     "--json"
+  INCLUDES
+    "executable_debug_info.fbs"
   PUBLIC
 )
 
 flatbuffer_c_library(
   NAME
-    spirv_executable_def_c_fbs
+    vulkan_executable_def_c_fbs
   SRCS
-    "spirv_executable_def.fbs"
+    "vulkan_executable_def.fbs"
   FLATCC_ARGS
     "--reader"
     "--builder"
     "--verifier"
     "--json"
+  INCLUDES
+    "executable_debug_info.fbs"
   PUBLIC
 )
 
 flatbuffer_c_library(
   NAME
-    wgsl_executable_def_c_fbs
+    webgpu_executable_def_c_fbs
   SRCS
-    "wgsl_executable_def.fbs"
+    "webgpu_executable_def.fbs"
   FLATCC_ARGS
     "--reader"
     "--builder"
     "--verifier"
     "--json"
+  INCLUDES
+    "executable_debug_info.fbs"
   PUBLIC
+)
+
+add_custom_command(OUTPUT cpu_data_headers_filegroup.stamp
+    COMMAND ${CMAKE_COMMAND} -E touch cpu_data_headers_filegroup.stamp
+  DEPENDS
+    "cpu_data.h"
+    "cpu_feature_bits.inl"
+)
+
+add_custom_target(cpu_data_headers_filegroup
+    DEPENDS cpu_data_headers_filegroup.stamp
 )
 
 iree_cc_library(
@@ -94,6 +143,16 @@ iree_cc_library(
   HDRS
     "cpu_data.h"
     "cpu_feature_bits.inl"
+  DEPS
+
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    parameter_archive
+  HDRS
+    "parameter_archive.h"
   DEPS
 
   PUBLIC

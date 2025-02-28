@@ -1,18 +1,16 @@
 // RUN: iree-opt --split-input-file \
-// RUN:   --pass-pipeline='builtin.module(hal.executable(hal.executable.variant(builtin.module(func.func(iree-spirv-tile,canonicalize,cse,iree-spirv-vectorize,canonicalize,cse)))))' \
+// RUN:   --pass-pipeline='builtin.module(hal.executable(hal.executable.variant(builtin.module(func.func(iree-codegen-gpu-tile,canonicalize,cse,iree-codegen-generic-vectorization,iree-spirv-initial-vector-lowering,iree-codegen-optimize-tensor-insert-extract-slices,iree-spirv-final-vector-lowering,canonicalize,cse)))))' \
 // RUN:   %s | FileCheck %s
 
 #config = #iree_codegen.lowering_config<tile_sizes = [[0, 2, 2, 8], [0, 1, 1, 4], [0, 0, 0, 0, 1, 1], [0, 1, 0, 0]]>
-#translation = #iree_codegen.translation_info<SPIRVBaseVectorize>
-#pipeline_layout = #hal.pipeline.layout<push_constants = 0, sets = [
-  #hal.descriptor_set.layout<0, bindings = [
-    #hal.descriptor_set.binding<0, storage_buffer>,
-    #hal.descriptor_set.binding<1, storage_buffer>
-  ]>
+#translation = #iree_codegen.translation_info<pipeline = SPIRVBaseVectorize>
+#pipeline_layout = #hal.pipeline.layout<bindings = [
+  #hal.pipeline.binding<storage_buffer>,
+  #hal.pipeline.binding<storage_buffer>
 ]>
 
 hal.executable private @pooling_nhwc_sum_f32 {
-  hal.executable.variant @vulkan, target = <"vulkan-spirv", "vulkan-spirv-fb"> {
+  hal.executable.variant @vulkan target(<"vulkan-spirv", "vulkan-spirv-fb">) {
     hal.executable.export @pooling_nhwc_sum_f32 layout(#pipeline_layout) attributes {
       workgroup_size = [2: index, 2: index, 2: index],
       translation_info = #translation
@@ -28,8 +26,8 @@ hal.executable private @pooling_nhwc_sum_f32 {
         %c8 = arith.constant 8 : index
         %c0 = arith.constant 0 : index
         %cst = arith.constant 0.000000e+00 : f32
-        %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<1x24x24x8xf32>>
-        %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<1x2x2x8xf32>>
+        %0 = hal.interface.binding.subspan layout(#pipeline_layout) binding(0) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<1x24x24x8xf32>>
+        %1 = hal.interface.binding.subspan layout(#pipeline_layout) binding(1) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<1x2x2x8xf32>>
         %2 = tensor.empty() : tensor<12x12xf32>
         %workgroup_id_x = hal.interface.workgroup.id[0] : index
         %workgroup_id_y = hal.interface.workgroup.id[1] : index

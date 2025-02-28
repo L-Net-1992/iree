@@ -21,11 +21,12 @@ iree_check_single_backend_test_suite(
   DRIVER
     "vulkan"
   COMPILER_FLAGS
-    "--iree-input-type=mhlo"
-    "--iree-vulkan-target-triple=valhall-unknown-android31"
+    "--iree-input-type=stablehlo"
+    "--iree-vulkan-target=valhall"
   LABELS
     "manual"
     "notap"
+    "vulkan_uses_vk_khr_16bit_storage"
     "vulkan_uses_vk_khr_shader_float16_int8"
 )
 
@@ -39,8 +40,8 @@ iree_check_single_backend_test_suite(
   DRIVER
     "vulkan"
   COMPILER_FLAGS
-    "--iree-input-type=mhlo"
-    "--iree-vulkan-target-triple=valhall-unknown-android31"
+    "--iree-input-type=stablehlo"
+    "--iree-vulkan-target=valhall"
 )
 
 iree_check_single_backend_test_suite(
@@ -54,9 +55,9 @@ iree_check_single_backend_test_suite(
   DRIVER
     "vulkan"
   COMPILER_FLAGS
-    "--iree-input-type=mhlo"
-    "--iree-mhlo-demote-i64-to-i32=false"
-    "--iree-vulkan-target-triple=valhall-unknown-android31"
+    "--iree-input-type=stablehlo"
+    "--iree-input-demote-i64-to-i32=false"
+    "--iree-vulkan-target=valhall"
   LABELS
     "manual"
     "notap"

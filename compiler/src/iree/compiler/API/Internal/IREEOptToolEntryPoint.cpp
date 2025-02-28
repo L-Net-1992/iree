@@ -8,10 +8,12 @@
 //
 // Based on mlir-opt but registers the passes and dialects we care about.
 
+#include "iree/compiler/Dialect/HAL/Target/TargetRegistry.h"
+#include "iree/compiler/Dialect/VM/Target/init_targets.h"
 #include "iree/compiler/PluginAPI/PluginManager.h"
 #include "iree/compiler/Tools/init_dialects.h"
+#include "iree/compiler/Tools/init_llvmir_translations.h"
 #include "iree/compiler/Tools/init_passes.h"
-#include "iree/compiler/Tools/init_targets.h"
 #include "iree/compiler/tool_entry_points_api.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Process.h"
@@ -29,9 +31,13 @@
 using namespace llvm;
 using namespace mlir;
 
+using mlir::iree_compiler::IREE::HAL::TargetBackendList;
+using mlir::iree_compiler::IREE::HAL::TargetDeviceList;
+using mlir::iree_compiler::IREE::HAL::TargetRegistry;
+
 #if defined(_MSC_VER)
 #define fileno _fileno
-#endif  // _MSC_VER
+#endif // _MSC_VER
 
 static LogicalResult ireeOptMainFromCL(int argc, char **argv,
                                        llvm::StringRef toolName,
@@ -87,8 +93,35 @@ static LogicalResult ireeOptMainFromCL(int argc, char **argv,
   auto localBinder = mlir::iree_compiler::OptionsBinder::local();
   mlir::iree_compiler::PluginManagerSession pluginSession(
       pluginManager, localBinder, pluginManagerOptions);
-  if (failed(pluginSession.initializePlugins())) return failure();
+  if (failed(pluginSession.initializePlugins()))
+    return failure();
   pluginSession.registerDialects(registry);
+
+  // In the normal compiler flow, activated plugins maintain a scoped registry
+  // of target backends. However, no such layering exists for the opt tool.
+  // Since it tests passes that are default initialized, we just configure the
+  // global registry that such constructors depend on.
+  TargetDeviceList pluginTargetDeviceList;
+  pluginSession.populateHALTargetDevices(pluginTargetDeviceList);
+  const_cast<TargetRegistry &>(TargetRegistry::getGlobal())
+      .mergeFrom(pluginTargetDeviceList);
+  TargetBackendList pluginTargetBackendList;
+  pluginSession.populateHALTargetBackends(pluginTargetBackendList);
+  const_cast<TargetRegistry &>(TargetRegistry::getGlobal())
+      .mergeFrom(pluginTargetBackendList);
+
+  // brought from mlir-opt MlirOptMain.cpp
+  // printRegisteredDialects and printRegisteredPassesAndReturn
+  if (config.shouldShowDialects()) {
+    llvm::outs() << "Available Dialects: ";
+    interleave(registry.getDialectNames(), llvm::outs(), ",");
+    llvm::outs() << "\n";
+    return success();
+  }
+  if (config.shouldListPasses()) {
+    mlir::printRegisteredPasses();
+    return success();
+  }
 
   // When reading from stdin and the input is a tty, it is often a user mistake
   // and the process "appears to be stuck". Print a message to let the user know
@@ -121,13 +154,14 @@ static LogicalResult ireeOptMainFromCL(int argc, char **argv,
 
 int ireeOptRunMain(int argc, char **argv) {
   llvm::setBugReportMsg(
-      "Please report issues to https://github.com/openxla/iree/issues and "
+      "Please report issues to https://github.com/iree-org/iree/issues and "
       "include the crash backtrace.\n");
 
   mlir::DialectRegistry registry;
   mlir::iree_compiler::registerAllDialects(registry);
   mlir::iree_compiler::registerAllPasses();
-  mlir::iree_compiler::registerHALTargetBackends();
+  mlir::iree_compiler::registerVMTargets();
+  mlir::iree_compiler::registerLLVMIRTranslations(registry);
 
   // Register the pass to drop embedded transform dialect IR.
   // TODO: this should be upstreamed.

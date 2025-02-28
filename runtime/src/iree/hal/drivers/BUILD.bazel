@@ -19,6 +19,7 @@ string_list_flag(
         "cuda",
         "local-sync",
         "local-task",
+        "null",
         "vulkan",
     ],
 )
@@ -26,6 +27,7 @@ string_list_flag(
 UNCONDITIONAL_DRIVERS = [
     "local-sync",
     "local-task",
+    "null",
     "vulkan",
 ]
 
@@ -54,7 +56,6 @@ iree_runtime_cc_library(
     hdrs = ["init.h"],
     deps = [
                "//runtime/src/iree/base",
-               "//runtime/src/iree/base:tracing",
                "//runtime/src/iree/hal",
            ] + select({
                ":cuda_enabled": ["//runtime/src/iree/hal/drivers/cuda/registration"],
@@ -66,6 +67,10 @@ iree_runtime_cc_library(
            }) +
            select({
                ":local-task_enabled": ["//runtime/src/iree/hal/drivers/local_task/registration"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":null_enabled": ["//runtime/src/iree/hal/drivers/null/registration"],
                "//conditions:default": [],
            }) +
            select({

@@ -87,13 +87,14 @@ int main(int argc, char** argv) {
   const int32_t input_data[5] = {1, 2, 3, 4, 5};
   const iree_hal_dim_t shape[1] = {IREE_ARRAYSIZE(input_data)};
   iree_hal_buffer_view_t* input_view = NULL;
-  IREE_CHECK_OK(iree_hal_buffer_view_allocate_buffer(
+  IREE_CHECK_OK(iree_hal_buffer_view_allocate_buffer_copy(
+      iree_runtime_session_device(session),
       iree_runtime_session_device_allocator(session), IREE_ARRAYSIZE(shape),
       shape, IREE_HAL_ELEMENT_TYPE_INT_32,
       IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR,
       (iree_hal_buffer_params_t){
           .type = IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL,
-          .access = IREE_HAL_MEMORY_ACCESS_READ,
+          .access = IREE_HAL_MEMORY_ACCESS_ALL,
           .usage = IREE_HAL_BUFFER_USAGE_DEFAULT,
       },
       iree_make_const_byte_span(input_data, sizeof(input_data)), &input_view));
@@ -104,7 +105,8 @@ int main(int argc, char** argv) {
   // We'll pass these in with the timeline at T=0 so that the runtime isn't
   // allowed to execute anything until we give it the go-ahead.
   iree_hal_semaphore_t* semaphore = NULL;
-  IREE_CHECK_OK(iree_hal_semaphore_create(device, 0ull, &semaphore));
+  IREE_CHECK_OK(iree_hal_semaphore_create(
+      device, 0ull, IREE_HAL_SEMAPHORE_FLAG_NONE, &semaphore));
   iree_hal_fence_t* fence_t1 = NULL;
   IREE_CHECK_OK(
       iree_hal_fence_create_at(semaphore, 1ull, host_allocator, &fence_t1));

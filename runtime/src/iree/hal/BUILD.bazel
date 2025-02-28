@@ -30,6 +30,8 @@ iree_runtime_cc_library(
         "buffer.h",
         "buffer_heap.c",
         "buffer_heap_impl.h",
+        "buffer_transfer.c",
+        "buffer_transfer.h",
         "buffer_view.c",
         "buffer_view.h",
         "buffer_view_util.c",
@@ -57,8 +59,9 @@ iree_runtime_cc_library(
         "executable_cache.h",
         "fence.c",
         "fence.h",
-        "pipeline_layout.c",
-        "pipeline_layout.h",
+        "file.c",
+        "file.h",
+        "queue.h",
         "resource.h",
         "semaphore.c",
         "semaphore.h",
@@ -70,11 +73,10 @@ iree_runtime_cc_library(
     ],
     deps = [
         "//runtime/src/iree/base",
-        "//runtime/src/iree/base:core_headers",
-        "//runtime/src/iree/base:tracing",
         "//runtime/src/iree/base/internal",
         "//runtime/src/iree/base/internal:path",
         "//runtime/src/iree/base/internal:synchronization",
+        "//runtime/src/iree/io:file_handle",
     ],
 )
 

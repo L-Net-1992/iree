@@ -444,9 +444,11 @@ vm.import private @pack(
   %in_buffer : !vm.buffer,
   %in_offset : i64,
   %in_stride0 : i64,
+  %in_stride1 : i64,
   %out_buffer : !vm.buffer,
   %out_offset : i64,
   %out_stride0 : i64,
+  %out_stride1 : i64,
   %in_size0 : i64,
   %in_size1 : i64,
   %out_size0 : i64,
@@ -465,9 +467,11 @@ vm.import private @unpack(
   %in_buffer : !vm.buffer,
   %in_offset : i64,
   %in_stride0 : i64,
+  %in_stride1 : i64,
   %out_buffer : !vm.buffer,
   %out_offset : i64,
   %out_stride0 : i64,
+  %out_stride1 : i64,
   %in_size0 : i64,
   %in_size1 : i64,
   %in_size2 : i64,
@@ -482,7 +486,8 @@ vm.import private @unpack(
 //==============================================================================
 
 vm.import private @query_tile_sizes.2d(
-  %sizes : tuple<i64, i64>,
+  %size0 : i64,
+  %size1 : i64,
   %flags : i32
 ) -> (i64, i64)
 

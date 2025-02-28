@@ -4,27 +4,30 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/Codegen/Common/LinalgOpInfo.h"
-#include "iree/compiler/Codegen/LLVMGPU/TransposeUtils.h"
-#include "iree/compiler/Codegen/PassDetail.h"
-#include "iree/compiler/Codegen/Passes.h"
+#include "iree/compiler/Codegen/LLVMGPU/Passes.h"
+#include "iree/compiler/Codegen/Utils/GPUUtils.h"
+#include "iree/compiler/Codegen/Utils/LinalgOpInfo.h"
 #include "iree/compiler/Dialect/Flow/IR/FlowOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "iree-llvmgpu-tensor-pad"
 
-namespace mlir {
-namespace iree_compiler {
+namespace mlir::iree_compiler {
+
+#define GEN_PASS_DEF_LLVMGPUTENSORPADPASS
+#include "iree/compiler/Codegen/LLVMGPU/Passes.h.inc"
 
 namespace {
 
-static FailureOr<SmallVector<int64_t>> getPaddedShapeFromTensorLoad(
-    IREE::Flow::DispatchTensorLoadOp tensorLoad, ArrayRef<int64_t> origShape) {
+static FailureOr<SmallVector<int64_t>>
+getPaddedShapeFromTensorLoad(IREE::Flow::DispatchTensorLoadOp tensorLoad,
+                             ArrayRef<int64_t> origShape) {
   // Determine the padded shape from the load.
   SmallVector<int64_t> paddedShape(origShape.begin(), origShape.end());
   for (const auto &[index, size] :
@@ -34,85 +37,20 @@ static FailureOr<SmallVector<int64_t>> getPaddedShapeFromTensorLoad(
     } else {
       FailureOr<int64_t> upperBound =
           ValueBoundsConstraintSet::computeConstantBound(
-              presburger::BoundType::UB, size.get<Value>(),
-              /*dim=*/std::nullopt,
+              presburger::BoundType::UB,
+              {cast<Value>(size), /*dim=*/std::nullopt},
               /*stopCondition=*/nullptr, /*closedUB=*/true);
-      if (failed(upperBound)) return failure();
+      if (failed(upperBound))
+        return failure();
       paddedShape[index] = *upperBound;
     }
   }
   return paddedShape;
 }
 
-static FailureOr<SmallVector<Value>> rewriteAsPaddedOp(
-    IRRewriter &rewriter, linalg::LinalgOp linalgOp,
-    linalg::LinalgOp &paddedOp) {
-  Location loc = linalgOp.getLoc();
-
-  IRRewriter::InsertionGuard g(rewriter);
-  // Set IP after op because we also take the dims of the original output.
-  rewriter.setInsertionPointAfter(linalgOp);
-
-  // Pad each input operand in shared memory up to the targets bounding box
-  // size. In this case, this corresponds with the maximum tile size from
-  // distributing to workgroups.
-  SmallVector<Value> paddedOperands;
-  paddedOperands.reserve(linalgOp.getNumDpsInputs() +
-                         linalgOp.getNumDpsInits());
-  for (OpOperand &opOperand : linalgOp->getOpOperands()) {
-    auto tensorLoad =
-        opOperand.get().getDefiningOp<IREE::Flow::DispatchTensorLoadOp>();
-    if (!tensorLoad) {
-      return rewriter.notifyMatchFailure(linalgOp, "does not have tensor load");
-    }
-    FailureOr<SmallVector<int64_t>> maybePaddedShape =
-        getPaddedShapeFromTensorLoad(tensorLoad, linalgOp.getShape(&opOperand));
-    if (failed(maybePaddedShape)) return failure();
-    auto paddedShape = *maybePaddedShape;
-
-    Value paddingValue = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getZeroAttr(getElementTypeOrSelf(tensorLoad)));
-    auto paddedTensorType =
-        RankedTensorType::get(paddedShape, getElementTypeOrSelf(tensorLoad));
-    Value paddedValue = linalg::makeComposedPadHighOp(
-        rewriter, loc, paddedTensorType, tensorLoad, paddingValue,
-        /*nofold=*/false);
-    paddedOperands.push_back(paddedValue);
-  }
-
-  // Clone linalgOp to paddedOp with padded input/output shapes.
-  auto resultTensorTypes = ValueRange(paddedOperands)
-                               .take_back(linalgOp.getNumDpsInits())
-                               .getTypes();
-  paddedOp = mlir::clone(rewriter, linalgOp, resultTensorTypes, paddedOperands);
-
-  // Slice out the original shape from the padded result to pass on to
-  // consumers. The original linalg op is used to provide the dims for the reify
-  // result shapes.
-  SmallVector<SmallVector<OpFoldResult>> reifiedResultShapes;
-  if (failed(cast<ReifyRankedShapedTypeOpInterface>(linalgOp.getOperation())
-                 .reifyResultShapes(rewriter, reifiedResultShapes))) {
-    return failure();
-  }
-
-  SmallVector<Value> paddedSubviewResults;
-  paddedSubviewResults.reserve(paddedOp->getNumResults());
-  for (const auto &[resultNumber, paddedResult] :
-       llvm::enumerate(paddedOp->getResults())) {
-    int64_t rank = paddedResult.getType().cast<RankedTensorType>().getRank();
-    SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
-    SmallVector<OpFoldResult> sizes;
-    for (OpFoldResult v : reifiedResultShapes[resultNumber]) sizes.push_back(v);
-    SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
-    paddedSubviewResults.push_back(rewriter.create<tensor::ExtractSliceOp>(
-        loc, paddedResult, offsets, sizes, strides));
-  }
-  return paddedSubviewResults;
-}
-
 static FailureOr<Value> rewriteAsPaddedOp(IRRewriter &rewriter,
-                                          tensor::UnPackOp op,
-                                          tensor::UnPackOp &paddedOp) {
+                                          linalg::UnPackOp op,
+                                          linalg::UnPackOp &paddedOp) {
   Location loc = op.getLoc();
 
   // Set IP after op because we also take the dims of the original output.
@@ -126,10 +64,11 @@ static FailureOr<Value> rewriteAsPaddedOp(IRRewriter &rewriter,
 
   FailureOr<SmallVector<int64_t>> maybePaddedShape =
       getPaddedShapeFromTensorLoad(tensorLoad, op.getDestType().getShape());
-  if (failed(maybePaddedShape)) return failure();
+  if (failed(maybePaddedShape))
+    return failure();
   auto paddedShape = *maybePaddedShape;
 
-  // Pad to the shape that makes tensor.unpack ops produce full tiles.
+  // Pad to the shape that makes linalg.unpack ops produce full tiles.
   SmallVector<int64_t> innerTiles = op.getStaticTiles();
   ArrayRef<int64_t> dimPos = op.getInnerDimsPos();
   for (auto [pos, size] : llvm::zip_equal(dimPos, innerTiles)) {
@@ -146,7 +85,7 @@ static FailureOr<Value> rewriteAsPaddedOp(IRRewriter &rewriter,
 
   SmallVector<Value> paddedOperands = {op.getSource(), paddedValue};
   paddedOperands.append(op.getInnerTiles().begin(), op.getInnerTiles().end());
-  paddedOp = rewriter.create<tensor::UnPackOp>(
+  paddedOp = rewriter.create<linalg::UnPackOp>(
       loc, TypeRange{paddedValue.getType()}, paddedOperands, op->getAttrs());
 
   // Slice out the original shape from the padded result to pass on to
@@ -171,8 +110,8 @@ static bool hasTwoOrThreeLoopsInfo(linalg::LinalgOp linalgOp) {
          linalgOp.getNumParallelLoops() <= 3;
 }
 
-struct LLVMGPUTensorPadPass
-    : public LLVMGPUTensorPadBase<LLVMGPUTensorPadPass> {
+struct LLVMGPUTensorPadPass final
+    : impl::LLVMGPUTensorPadPassBase<LLVMGPUTensorPadPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<bufferization::BufferizationDialect>();
   }
@@ -191,19 +130,32 @@ struct LLVMGPUTensorPadPass
         return;
       }
 
-      linalg::LinalgOp paddedOp;
-      FailureOr<SmallVector<Value>> newResults =
-          rewriteAsPaddedOp(rewriter, linalgOp, paddedOp);
-      if (failed(newResults)) {
-        return;
+      SmallVector<int64_t> paddingDims =
+          llvm::to_vector(llvm::seq<int64_t>(0, linalgOp.getNumLoops()));
+      SmallVector<Attribute> paddingValueAttributes;
+      for (auto &operand : linalgOp->getOpOperands()) {
+        auto elemType = getElementTypeOrSelf(operand.get().getType());
+        paddingValueAttributes.push_back(rewriter.getZeroAttr(elemType));
       }
 
-      // Replace the original operation to pad.
-      rewriter.replaceOp(linalgOp, *newResults);
+      auto options =
+          linalg::LinalgPaddingOptions()
+              .setPaddingDimensions(paddingDims)
+              .setPaddingValues(paddingValueAttributes)
+              .setCopyBackOp(linalg::LinalgPaddingOptions::CopyBackOp::None);
+      linalg::LinalgOp paddedOp;
+      SmallVector<Value> newResults;
+      SmallVector<tensor::PadOp> padOps;
+      if (failed(linalg::rewriteAsPaddedOp(rewriter, linalgOp, options,
+                                           paddedOp, newResults, padOps))) {
+        funcOp.emitWarning("failed to pad ops");
+        return;
+      }
+      rewriter.replaceOp(linalgOp, newResults);
     });
 
-    funcOp.walk([&](tensor::UnPackOp unpackOp) {
-      tensor::UnPackOp paddedOp;
+    funcOp.walk([&](linalg::UnPackOp unpackOp) {
+      linalg::UnPackOp paddedOp;
       FailureOr<Value> newResult =
           rewriteAsPaddedOp(rewriter, unpackOp, paddedOp);
       if (failed(newResult)) {
@@ -215,11 +167,5 @@ struct LLVMGPUTensorPadPass
     });
   }
 };
-}  // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>> createLLVMGPUTensorPadPass() {
-  return std::make_unique<LLVMGPUTensorPadPass>();
-}
-
-}  // namespace iree_compiler
-}  // namespace mlir
+} // namespace
+} // namespace mlir::iree_compiler

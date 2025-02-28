@@ -7,7 +7,6 @@
 #include "runtime/bindings/tflite/interpreter.h"
 
 #include "iree/base/internal/call_once.h"
-#include "iree/base/tracing.h"
 #include "iree/hal/drivers/init.h"
 #include "iree/modules/hal/module.h"
 #include "runtime/bindings/tflite/model.h"
@@ -62,7 +61,8 @@ static iree_status_t _TfLiteInterpreterPrepareHAL(
       (int)driver_name.size, driver_name.data);
 
   IREE_RETURN_IF_ERROR(iree_hal_module_create(
-      interpreter->instance, interpreter->device, IREE_HAL_MODULE_FLAG_NONE,
+      interpreter->instance, /*device_count=*/1, &interpreter->device,
+      IREE_HAL_MODULE_FLAG_NONE, iree_hal_module_debug_sink_stdio(stderr),
       interpreter->allocator, &interpreter->hal_module));
 
   return iree_ok_status();
@@ -394,7 +394,7 @@ TFL_CAPI_EXPORT extern TfLiteInterpreter* TfLiteInterpreterCreate(
       _TfLiteInterpreterCreate(model, optional_options, &interpreter);
   if (iree_status_is_ok(iree_status_consume_code(status))) {
     IREE_TRACE_ZONE_APPEND_TEXT(z0, "num_threads=", strlen("num_threads="));
-    IREE_TRACE_ZONE_APPEND_VALUE(z0, interpreter->options.num_threads);
+    IREE_TRACE_ZONE_APPEND_VALUE_I64(z0, interpreter->options.num_threads);
   } else {
     IREE_TRACE_MESSAGE(ERROR, "failed interpreter creation");
     TfLiteInterpreterDelete(interpreter);
@@ -564,7 +564,7 @@ TFL_CAPI_EXPORT extern TfLiteStatus TfLiteInterpreterAllocateTensors(
     total_input_size +=
         iree_hal_buffer_byte_length(interpreter->input_tensors[i].buffer);
   }
-  IREE_TRACE_ZONE_APPEND_VALUE(z0, total_input_size);
+  IREE_TRACE_ZONE_APPEND_VALUE_I64(z0, total_input_size);
 #endif  // IREE_TRACING_FEATURES & IREE_TRACING_FEATURE_INSTRUMENTATION
 
   IREE_TRACE_ZONE_END(z0);
@@ -609,7 +609,7 @@ TFL_CAPI_EXPORT extern TfLiteStatus TfLiteInterpreterInvoke(
     total_output_size +=
         iree_hal_buffer_byte_length(interpreter->output_tensors[i].buffer);
   }
-  IREE_TRACE_ZONE_APPEND_VALUE(z0, total_output_size);
+  IREE_TRACE_ZONE_APPEND_VALUE_I64(z0, total_output_size);
 #endif  // IREE_TRACING_FEATURES & IREE_TRACING_FEATURE_INSTRUMENTATION
 
   IREE_TRACE_ZONE_END(z0);
